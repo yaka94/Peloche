@@ -1,0 +1,31 @@
+<resources>
+    <string name="app_name">Peloche</string>
+    <string name="screen_viewfinder">Viseur</string>
+    <string name="screen_boutique">Sac Photo</string>
+    <string name="screen_labo">Labo &amp; Pellicules</string>
+    <string name="screen_contact_sheet">Planche-Contact</string>
+    <string name="label_body">Boîtier</string>
+    <string name="label_lens">Objectif</string>
+    <string name="label_film">Pellicule</string>
+    <string name="label_expiration">Péremption</string>
+    <string name="label_develop_roll">Développer le rouleau</string>
+    <string name="label_rewind_early">Rembobiner maintenant</string>
+    <string name="label_load_new_roll">Charger une nouvelle pellicule</string>
+    <string name="label_export_jpeg">Exporter JPEG 95 %</string>
+    <string name="label_export_png">Exporter PNG sans perte</string>
+    <string name="label_export_contact_sheet">Exporter la planche-contact</string>
+    <string name="label_settings">Réglages mécaniques</string>
+    <string name="cd_shutter_button">Déclencher la prise de vue</string>
+    <string name="cd_flip_camera">Basculer caméra avant ou arrière</string>
+    <string name="cd_open_labo">Ouvrir le laboratoire et les pellicules développées</string>
+    <string name="cd_open_settings">Ouvrir les réglages du boîtier</string>
+    <string name="cd_advance_lever">Levier d\'armement manuel</string>
+    <string name="cd_back">Retour</string>
+    <string name="cd_toggle_grid">Afficher ou masquer la grille des tiers</string>
+    <string name="cd_toggle_date_stamp">Activer ou désactiver l\'horodatage rétro</string>
+    <string name="permission_camera_title">Accès à l\'objectif requis</string>
+    <string name="permission_camera_desc">Autorisez la caméra pour viser en temps réel à travers votre chaîne optique, ou testez la boutique sur nos scènes témoins locales.</string>
+    <string name="permission_camera_grant">Activer la caméra</string>
+    <string name="permission_camera_demo">Utiliser la scène témoin</string>
+    <string name="roll_locked_notice">Pellicule non développée — les négatifs restent cachés jusqu\'au passage au labo.</string>
+</resources>

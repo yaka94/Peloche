@@ -1,0 +1,6 @@
+{
+  "name": "Peloche",
+  "description": "Peloche — studio argentique de poche 100 % local : boîtiers, objectifs compatibles, pellicules périmées, sac photo et labo de développement.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
