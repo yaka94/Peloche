@@ -6,4 +6,10 @@
     <cache-path
         name="shared_sheets"
         path="share/" />
+    <cache-path
+        name="instant_previews"
+        path="instant_preview/" />
+    <cache-path
+        name="super8_clips"
+        path="super8/" />
 </paths>

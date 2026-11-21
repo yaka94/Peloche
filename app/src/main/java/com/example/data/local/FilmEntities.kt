@@ -22,8 +22,12 @@ data class FilmRollEntity(
     val isActive: Boolean = true,
     val isDiptychMode: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
-    val developedAt: Long? = null
+    val developedAt: Long? = null,
+    val customTitle: String = ""
 ) {
+    val displayTitle: String
+        get() = customTitle.trim().ifEmpty { "Rouleau N°%03d".format(rollNumber) }
+
     val expirationDate: FilmExpirationDate
         get() = FilmExpirationDate.parse(expirationSerialized)
 
@@ -63,5 +67,6 @@ data class FilmFrameEntity(
     val dateStampText: String?,       // null if date stamp was OFF at shutter release
     val isFrontCamera: Boolean = false,
     val isDiptychPaired: Boolean = false,
-    val capturedAt: Long = System.currentTimeMillis()
+    val capturedAt: Long = System.currentTimeMillis(),
+    val caption: String = ""
 )

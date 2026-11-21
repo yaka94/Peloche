@@ -3,6 +3,9 @@ package com.example.viewmodel
 import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.net.Uri
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
@@ -13,6 +16,8 @@ import com.example.data.local.FilmRepository
 import com.example.data.local.FilmRollEntity
 import com.example.data.local.SettingsDataStore
 import com.example.domain.model.CameraBodyModel
+import com.example.domain.model.CameraFlashMode
+import com.example.domain.model.CuratedEraCombo
 import com.example.domain.model.DateStampStyle
 import com.example.domain.model.DevelopmentMethod
 import com.example.domain.model.FilmExpirationDate
@@ -23,10 +28,14 @@ import com.example.domain.model.FilmTypeFilter
 import com.example.domain.model.HardwareCatalog
 import com.example.domain.model.LensModel
 import com.example.domain.model.OpticalChainParams
+import com.example.domain.model.SavedComboPreset
+import com.example.domain.model.VideoFilterStyle
 import com.example.engine.ExifAndExportManager
 import com.example.engine.MechanicalAudioEngine
+import com.example.engine.OffscreenGlProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -70,6 +79,33 @@ data class DevelopmentProgressState(
     val rollBeingDeveloped: FilmRollEntity? = null
 )
 
+data class InstantPrintPreview(
+    val developedPath: String,
+    val originalPath: String,
+    val filmName: String,
+    val filmCode: String,
+    val bodyName: String,
+    val lensLabel: String,
+    val caption: String,
+    val isImportedFromGallery: Boolean,
+    val frameNumber: Int,
+    val handwrittenNote: String = "",
+    val frameId: Long? = null,
+    val revealType: String = "STANDARD"
+)
+
+data class RecordedClipPreview(
+    val filePath: String,
+    val durationSec: Int,
+    val bodyName: String,
+    val filmName: String,
+    val filmCode: String,
+    val aspectLabel: String,
+    val videoFilterLabel: String = "Super 8 Kodachrome",
+    val videoFilterBadge: String = "SUPER 8",
+    val fpsLabel: String = "18 i/s"
+)
+
 data class ArgentiqueUiState(
     val currentScreen: AppScreen = AppScreen.VIEWFINDER,
     val boutiqueFocusTab: BoutiqueFocusTab = BoutiqueFocusTab.FILM,
@@ -85,12 +121,27 @@ data class ArgentiqueUiState(
     val evCompensation: Float = 0f,
     val zoomMultiplier: Float = 1.0f,
     val isFrontCamera: Boolean = false,
+    val flashMode: CameraFlashMode = CameraFlashMode.OFF,
     val isAeAfLocked: Boolean = false,
     val useSampleSceneInViewfinder: Boolean = false,
     val previewLightLeakSeed: Float = 0.37f,
+    val lightLeakMode: com.example.domain.model.LightLeakMode = com.example.domain.model.LightLeakMode.AUTO,
+    val tiltShiftPosition: Float = 0.5f,
+    val tiltShiftVertical: Boolean = false,
+    val invertedGroundGlass: Boolean = false,
+    val isPureViewfinderMode: Boolean = false,
+    val selectedVideoFilter: VideoFilterStyle = VideoFilterStyle.SUPER_8_KODACHROME,
+    val isDoubleExposureMode: Boolean = false,
+    val doubleExposureFirstShotPath: String? = null,
+    val isCineVideoMode: Boolean = false,
+    val isRecordingVideo: Boolean = false,
+    val recordingElapsedSec: Int = 0,
+    val recordedClipPreview: RecordedClipPreview? = null,
     val isCapturing: Boolean = false,
+    val isImportingPhoto: Boolean = false,
     val selfTimerCountdown: Int = 0,
     val shutterFlashTick: Int = 0,
+    val instantPrintPreview: InstantPrintPreview? = null,
     val showSettingsSheet: Boolean = false,
     val showDevelopDialog: Boolean = false,
     val rollPendingDevelopmentId: Long? = null,
@@ -102,17 +153,64 @@ data class ArgentiqueUiState(
     val activeToastMessage: String? = null
 ) {
     val liveOpticalParams: OpticalChainParams
-        get() = OpticalChainParams(
-            lens = selectedLens,
-            body = selectedBody,
-            film = selectedFilm,
-            expirationDate = selectedExpiration,
-            development = DevelopmentMethod.STANDARD_C41,
-            evCompensation = evCompensation,
-            zoomMultiplier = zoomMultiplier,
-            lightLeakSeed = previewLightLeakSeed,
-            isFrontCamera = isFrontCamera
-        )
+        get() {
+            val isDedicatedVideoFilter = isCineVideoMode && selectedVideoFilter != VideoFilterStyle.OPTICAL_CHAIN
+            val effectiveFilm = if (isDedicatedVideoFilter) {
+                selectedFilm.copy(
+                    isMonochrome = false,
+                    redGain = 1.0f,
+                    greenGain = 1.0f,
+                    blueGain = 1.0f,
+                    contrast = 1.04f,
+                    saturation = 1.0f,
+                    toeLift = 0.015f,
+                    shoulderCompress = 0.10f,
+                    shadowTintR = 0f,
+                    shadowTintG = 0f,
+                    shadowTintB = 0f,
+                    highlightTintR = 0f,
+                    highlightTintG = 0f,
+                    highlightTintB = 0f,
+                    hueShift = 0f,
+                    sepiaAmount = 0f,
+                    cyanotypeAmount = 0f,
+                    infraredAmount = 0f,
+                    orthoUvAmount = 0f,
+                    collodionPlateAmount = 0f,
+                    daguerreTarnishAmount = 0f,
+                    autochromeMosaicAmount = 0f,
+                    paperFiberAmount = 0f,
+                    brushBorderAmount = 0f
+                )
+            } else {
+                selectedFilm
+            }
+            val effectiveBody = if (isDedicatedVideoFilter) {
+                selectedBody.copy(
+                    collodionPlateAmount = 0f,
+                    daguerreTarnishAmount = 0f,
+                    autochromeMosaicAmount = 0f
+                )
+            } else {
+                selectedBody
+            }
+            return OpticalChainParams(
+                lens = selectedLens,
+                body = effectiveBody,
+                film = effectiveFilm,
+                expirationDate = if (isDedicatedVideoFilter) FilmExpirationDate.freshDefault() else selectedExpiration,
+                development = DevelopmentMethod.STANDARD_C41,
+                evCompensation = evCompensation,
+                zoomMultiplier = zoomMultiplier,
+                lightLeakSeed = previewLightLeakSeed,
+                isFrontCamera = isFrontCamera,
+                lightLeakMode = lightLeakMode,
+                tiltShiftPosition = tiltShiftPosition,
+                tiltShiftVertical = tiltShiftVertical,
+                invertedGroundGlass = invertedGroundGlass && selectedBody.isHistoricalLargeFormat,
+                videoFilterMode = if (isCineVideoMode) selectedVideoFilter.shaderModeId else 0
+            )
+        }
 }
 
 class ArgentiqueViewModel(application: Application) : AndroidViewModel(application) {
@@ -124,6 +222,7 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _uiState = MutableStateFlow(ArgentiqueUiState())
     val uiState: StateFlow<ArgentiqueUiState> = _uiState.asStateFlow()
+    private var videoTimerJob: Job? = null
 
     val settings: StateFlow<CameraSettings> = settingsStore.settingsFlow.stateIn(
         scope = viewModelScope,
@@ -217,6 +316,22 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             val roll = repository.ensureActiveRoll()
             syncUiToRoll(roll, notifyIfExpired = true)
+        }
+        viewModelScope.launch {
+            settingsStore.settingsFlow
+                .map { it.lightLeakMode }
+                .distinctUntilChanged()
+                .collect { mode ->
+                    _uiState.update { it.copy(lightLeakMode = mode) }
+                }
+        }
+        viewModelScope.launch {
+            settingsStore.settingsFlow
+                .map { it.videoFilterStyle }
+                .distinctUntilChanged()
+                .collect { style ->
+                    _uiState.update { it.copy(selectedVideoFilter = style) }
+                }
         }
     }
 
@@ -595,6 +710,13 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.update { it.copy(isFrontCamera = !it.isFrontCamera) }
     }
 
+    fun cycleFlashMode() {
+        playDetent()
+        val next = _uiState.value.flashMode.next()
+        _uiState.update { it.copy(flashMode = next) }
+        showToast("Flash : ${next.labelFr}")
+    }
+
     fun toggleAeAfLock() {
         if (_uiState.value.selectedBody.isFixedFocusToyCam) {
             showToast("${_uiState.value.selectedBody.name} : focale fixe hyperfocale (sans autofocus).")
@@ -602,6 +724,205 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
         }
         playDetent()
         _uiState.update { it.copy(isAeAfLocked = !it.isAeAfLocked) }
+    }
+
+    fun toggleDoubleExposureMode() {
+        if (_uiState.value.isRecordingVideo) return
+        playDetent()
+        val wasEnabled = _uiState.value.isDoubleExposureMode
+        val pendingPath = _uiState.value.doubleExposureFirstShotPath
+        if (wasEnabled && pendingPath != null) {
+            runCatching { File(pendingPath).delete() }
+        }
+        _uiState.update {
+            it.copy(
+                isDoubleExposureMode = !wasEnabled,
+                doubleExposureFirstShotPath = if (wasEnabled) null else it.doubleExposureFirstShotPath,
+                isCineVideoMode = if (!wasEnabled) false else it.isCineVideoMode
+            )
+        }
+        showToast(
+            if (!wasEnabled) "Double exposition (2×) activée — exposez la 1re vue."
+            else "Double exposition désactivée."
+        )
+    }
+
+    fun cancelPendingDoubleExposure() {
+        playDetent()
+        val pendingPath = _uiState.value.doubleExposureFirstShotPath
+        if (pendingPath != null) {
+            runCatching { File(pendingPath).delete() }
+        }
+        _uiState.update { it.copy(doubleExposureFirstShotPath = null) }
+        showToast("1re exposition annulée — prêt pour une nouvelle surimpression.")
+    }
+
+    fun rerollOpticalEffects() {
+        playDetent()
+        _uiState.update { it.copy(previewLightLeakSeed = Random.nextFloat()) }
+        showToast("Nouveau tirage optique (fuites, flares & rayures)")
+    }
+
+    fun setTiltShiftPosition(pos: Float) {
+        val clamped = pos.coerceIn(0.15f, 0.85f)
+        if (clamped != _uiState.value.tiltShiftPosition) {
+            _uiState.update { it.copy(tiltShiftPosition = clamped) }
+        }
+    }
+
+    fun toggleTiltShiftOrientation() {
+        playDetent()
+        val nextVertical = !_uiState.value.tiltShiftVertical
+        _uiState.update { it.copy(tiltShiftVertical = nextVertical) }
+        showToast(if (nextVertical) "Bascule Tilt-Shift : bande verticale" else "Bascule Tilt-Shift : bande horizontale")
+    }
+
+    fun toggleInvertedGroundGlass() {
+        playDetent()
+        val next = !_uiState.value.invertedGroundGlass
+        _uiState.update { it.copy(invertedGroundGlass = next) }
+        showToast(
+            if (next) "Verre dépoli 180° activé (comme sur vraie chambre XIXe — cliché enregistré à l'endroit)."
+            else "Visée redressée activée."
+        )
+    }
+
+    fun togglePureViewfinderMode() {
+        playDetent()
+        val next = !_uiState.value.isPureViewfinderMode
+        _uiState.update { it.copy(isPureViewfinderMode = next) }
+    }
+
+    fun selectVideoFilter(style: VideoFilterStyle) {
+        playDetent()
+        _uiState.update { it.copy(selectedVideoFilter = style) }
+        viewModelScope.launch { settingsStore.setVideoFilterStyle(style) }
+        showToast("Ciné : ${style.labelFr} (${style.fpsLabel})")
+    }
+
+    fun toggleCineVideoMode() {
+        setCineVideoMode(!_uiState.value.isCineVideoMode)
+    }
+
+    fun setCineVideoMode(enteringCine: Boolean) {
+        if (_uiState.value.isRecordingVideo) return
+        if (_uiState.value.isCineVideoMode == enteringCine) return
+        playDetent()
+        val pendingPath = _uiState.value.doubleExposureFirstShotPath
+        if (enteringCine && pendingPath != null) {
+            runCatching { File(pendingPath).delete() }
+        }
+        _uiState.update {
+            it.copy(
+                isCineVideoMode = enteringCine,
+                isDoubleExposureMode = if (enteringCine) false else it.isDoubleExposureMode,
+                doubleExposureFirstShotPath = if (enteringCine) null else it.doubleExposureFirstShotPath
+            )
+        }
+        val activeStyle = _uiState.value.selectedVideoFilter
+        showToast(
+            if (enteringCine) "Mode Ciné : ${activeStyle.labelFr} (${activeStyle.fpsLabel})"
+            else "Mode Photo argentique"
+        )
+    }
+
+    fun createSuper8OutputFile(): File {
+        val dir = File(getApplication<Application>().cacheDir, "super8").apply { mkdirs() }
+        val state = _uiState.value
+        val tag = if (state.selectedVideoFilter == VideoFilterStyle.OPTICAL_CHAIN) {
+            state.selectedFilm.code
+        } else {
+            state.selectedVideoFilter.name.take(8)
+        }
+        return File(dir, "PELOCHE_CINE_${tag}_${System.currentTimeMillis() % 100000}.mp4")
+    }
+
+    fun onVideoRecordingStarted(onAutoStopRequested: () -> Unit) {
+        playDetent()
+        videoTimerJob?.cancel()
+        _uiState.update {
+            it.copy(
+                isRecordingVideo = true,
+                recordingElapsedSec = 0
+            )
+        }
+        videoTimerJob = viewModelScope.launch {
+            for (sec in 1..15) {
+                delay(1000L)
+                _uiState.update { it.copy(recordingElapsedSec = sec) }
+                if (sec >= 15) {
+                    onAutoStopRequested()
+                }
+            }
+        }
+    }
+
+    fun onVideoRecordingStopped(file: File?) {
+        videoTimerJob?.cancel()
+        videoTimerJob = null
+        playDetent()
+        val state = _uiState.value
+        val duration = state.recordingElapsedSec.coerceAtLeast(1)
+        val filter = state.selectedVideoFilter
+        if (file != null && file.exists() && file.length() > 1024L) {
+            _uiState.update {
+                it.copy(
+                    isRecordingVideo = false,
+                    recordingElapsedSec = 0,
+                    recordedClipPreview = RecordedClipPreview(
+                        filePath = file.absolutePath,
+                        durationSec = duration,
+                        bodyName = state.selectedBody.name,
+                        filmName = if (filter == VideoFilterStyle.OPTICAL_CHAIN) state.selectedFilm.name else filter.labelFr,
+                        filmCode = if (filter == VideoFilterStyle.OPTICAL_CHAIN) state.selectedFilm.code else filter.shortBadge,
+                        aspectLabel = state.selectedBody.aspectRatioSpec.displayLabel,
+                        videoFilterLabel = filter.labelFr,
+                        videoFilterBadge = filter.shortBadge,
+                        fpsLabel = filter.fpsLabel
+                    )
+                )
+            }
+        } else {
+            _uiState.update { it.copy(isRecordingVideo = false, recordingElapsedSec = 0) }
+            showToast("Clip vidéo trop court ou non enregistré.")
+        }
+    }
+
+    fun dismissRecordedClip() {
+        _uiState.update { it.copy(recordedClipPreview = null) }
+    }
+
+    fun saveRecordedClipToGallery() {
+        val clip = _uiState.value.recordedClipPreview ?: return
+        val file = File(clip.filePath)
+        if (!file.exists()) return
+        viewModelScope.launch {
+            val uri = withContext(Dispatchers.IO) {
+                ExifAndExportManager.exportVideoToMediaStore(
+                    context = getApplication(),
+                    sourceFile = file,
+                    displayName = file.name
+                )
+            }
+            if (uri != null) {
+                showToast("Clip Super 8 enregistré dans Movies/Peloche !")
+            } else {
+                showToast("Impossible d'enregistrer le clip vidéo.")
+            }
+        }
+    }
+
+    fun shareRecordedClip() {
+        val clip = _uiState.value.recordedClipPreview ?: return
+        val file = File(clip.filePath)
+        if (!ExifAndExportManager.shareVideoFile(
+                context = getApplication(),
+                file = file,
+                chooserTitle = "Partager le clip Super 8 (${clip.filmName})"
+            )
+        ) {
+            showToast("Partage vidéo indisponible.")
+        }
     }
 
     fun setUseSampleSceneInViewfinder(useSample: Boolean) {
@@ -679,30 +1000,129 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
                     shutterFlashTick = it.shutterFlashTick + 1
                 )
             }
-            audioEngine.playShutterClick(s.soundEnabled, s.hapticsEnabled)
+            audioEngine.playShutterClick(
+                soundEnabled = s.soundEnabled,
+                hapticsEnabled = s.hapticsEnabled,
+                mount = state.selectedBody.mount,
+                borderStyle = state.selectedBody.frameBorderStyle
+            )
 
             try {
                 val captured: Bitmap = hardwareBitmapProvider() ?: loadSampleBitmap(s.sampleSceneNight)
-                val (updatedRoll, _) = repository.recordLatentExposure(
+
+                // Double Exposure Step 1: store first exposure as translucent viewfinder ghost without advancing film!
+                if (state.isDoubleExposureMode && state.doubleExposureFirstShotPath == null) {
+                    val tempFile = withContext(Dispatchers.IO) {
+                        val dir = File(getApplication<Application>().cacheDir, "double_exp").apply { mkdirs() }
+                        val out = File(dir, "first_${System.currentTimeMillis()}.jpg")
+                        java.io.FileOutputStream(out).use { fos ->
+                            captured.compress(Bitmap.CompressFormat.JPEG, 92, fos)
+                        }
+                        out
+                    }
+                    captured.recycle()
+                    _uiState.update {
+                        it.copy(
+                            isCapturing = false,
+                            doubleExposureFirstShotPath = tempFile.absolutePath
+                        )
+                    }
+                    showToast("Vue 1/2 exposée — cadrez votre surimpression !")
+                    return@launch
+                }
+
+                // Double Exposure Step 2: optically blend Shot 1 + Shot 2 on the same frame!
+                val pendingFirstPath = state.doubleExposureFirstShotPath
+                val finalSourceBitmap: Bitmap = if (state.isDoubleExposureMode && pendingFirstPath != null) {
+                    val blended = withContext(Dispatchers.IO) {
+                        val firstFile = File(pendingFirstPath)
+                        val firstBmp = if (firstFile.exists()) BitmapFactory.decodeFile(firstFile.absolutePath) else null
+                        firstFile.delete()
+                        if (firstBmp != null) {
+                            val merged = OffscreenGlProcessor.blendDoubleExposure(firstBmp, captured)
+                            firstBmp.recycle()
+                            captured.recycle()
+                            merged
+                        } else {
+                            captured
+                        }
+                    }
+                    blended
+                } else {
+                    captured
+                }
+
+                val capturedSeed = state.previewLightLeakSeed
+                val (updatedRoll, savedFrame) = repository.recordLatentExposure(
                     roll = latestRoll,
-                    sourceBitmap = captured,
+                    sourceBitmap = finalSourceBitmap,
                     lens = state.selectedLens,
                     evCompensation = state.evCompensation,
                     zoomMultiplier = state.zoomMultiplier,
                     dateStampStyle = s.effectiveDateStampStyle,
-                    isFrontCamera = state.isFrontCamera
+                    isFrontCamera = state.isFrontCamera,
+                    lightLeakSeed = capturedSeed
                 )
-                captured.recycle()
+
+                val instantPreview = if (s.instantPreviewEnabled) {
+                    val result = repository.renderInstantPreview(
+                        sourceBitmap = finalSourceBitmap,
+                        body = state.selectedBody,
+                        lens = state.selectedLens,
+                        film = state.selectedFilm,
+                        expirationDate = state.selectedExpiration,
+                        evCompensation = state.evCompensation,
+                        zoomMultiplier = state.zoomMultiplier,
+                        dateStampStyle = s.effectiveDateStampStyle,
+                        includeFrameBorder = s.frameBorderEnabled,
+                        frameNumber = savedFrame.frameNumber,
+                        isFrontCamera = state.isFrontCamera,
+                        lightLeakSeed = capturedSeed,
+                        lightLeakMode = s.lightLeakMode,
+                        tiltShiftPosition = state.tiltShiftPosition,
+                        tiltShiftVertical = state.tiltShiftVertical
+                    )
+                    val revealKind = when {
+                        state.selectedBody.isInstantCamera -> "POLAROID"
+                        state.selectedBody.isHistoricalLargeFormat ||
+                            state.selectedFilm.collodionPlateAmount > 0.3f ||
+                            state.selectedFilm.daguerreTarnishAmount > 0.3f -> "COLLODION"
+                        else -> "STANDARD"
+                    }
+                    InstantPrintPreview(
+                        developedPath = result.developedPath,
+                        originalPath = result.originalPath,
+                        filmName = state.selectedFilm.name,
+                        filmCode = state.selectedFilm.code,
+                        bodyName = state.selectedBody.name,
+                        lensLabel = "${state.selectedLens.focalLabel} ${state.selectedLens.maxAperture}",
+                        caption = "${state.selectedFilm.name} · ${state.selectedBody.name}",
+                        isImportedFromGallery = false,
+                        frameNumber = savedFrame.frameNumber,
+                        frameId = savedFrame.id,
+                        revealType = revealKind
+                    )
+                } else {
+                    null
+                }
+                finalSourceBitmap.recycle()
 
                 delay(180L)
                 audioEngine.playAdvanceLever(s.soundEnabled, s.hapticsEnabled)
 
+                val completedDoubleExp = state.isDoubleExposureMode && pendingFirstPath != null
                 _uiState.update {
                     it.copy(
                         isCapturing = false,
                         previewLightLeakSeed = Random.nextFloat(),
-                        showEndOfRollPrompt = updatedRoll.isFull
+                        doubleExposureFirstShotPath = null,
+                        isDoubleExposureMode = if (completedDoubleExp) false else it.isDoubleExposureMode,
+                        instantPrintPreview = instantPreview ?: it.instantPrintPreview,
+                        showEndOfRollPrompt = updatedRoll.isFull && instantPreview == null
                     )
+                }
+                if (completedDoubleExp && instantPreview == null) {
+                    showToast("Double exposition enregistrée sur la vue #${savedFrame.frameNumber} !")
                 }
 
                 if (updatedRoll.isFull) {
@@ -711,6 +1131,184 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
             } catch (_: Throwable) {
                 _uiState.update { it.copy(isCapturing = false, selfTimerCountdown = 0) }
                 showToast("Erreur lors de l'exposition.")
+            }
+        }
+    }
+
+    /**
+     * Zero-permission Android Photo Picker import: develops an existing gallery photo through
+     * the currently mounted Boîtier + Objectif + Pellicule + Péremption + Cadre + Dateur
+     * and opens the museum-paper Tirage Galerie overlay with Avant/Après compare!
+     */
+    fun importPhotoFromUri(uri: Uri) {
+        if (_uiState.value.isImportingPhoto) return
+        val state = _uiState.value
+        val s = settings.value
+        _uiState.update { it.copy(isImportingPhoto = true, showSettingsSheet = false) }
+        viewModelScope.launch {
+            try {
+                val decoded = decodeOrientedBitmapFromUri(uri, maxEdge = 2048)
+                if (decoded == null) {
+                    _uiState.update { it.copy(isImportingPhoto = false) }
+                    showToast("Impossible de lire cette photo.")
+                    return@launch
+                }
+                audioEngine.playShutterClick(
+                    soundEnabled = s.soundEnabled,
+                    hapticsEnabled = s.hapticsEnabled,
+                    mount = state.selectedBody.mount,
+                    borderStyle = state.selectedBody.frameBorderStyle
+                )
+                val result = repository.renderInstantPreview(
+                    sourceBitmap = decoded,
+                    body = state.selectedBody,
+                    lens = state.selectedLens,
+                    film = state.selectedFilm,
+                    expirationDate = state.selectedExpiration,
+                    evCompensation = state.evCompensation,
+                    zoomMultiplier = 1.0f,
+                    dateStampStyle = s.effectiveDateStampStyle,
+                    includeFrameBorder = s.frameBorderEnabled,
+                    frameNumber = (activeRoll.value?.shotsTaken ?: 0) + 1,
+                    isFrontCamera = false,
+                    lightLeakSeed = state.previewLightLeakSeed,
+                    lightLeakMode = s.lightLeakMode,
+                    tiltShiftPosition = state.tiltShiftPosition,
+                    tiltShiftVertical = state.tiltShiftVertical
+                )
+                decoded.recycle()
+                val revealKind = when {
+                    state.selectedBody.isInstantCamera -> "POLAROID"
+                    state.selectedBody.isHistoricalLargeFormat ||
+                        state.selectedFilm.collodionPlateAmount > 0.3f ||
+                        state.selectedFilm.daguerreTarnishAmount > 0.3f -> "COLLODION"
+                    else -> "STANDARD"
+                }
+                _uiState.update {
+                    it.copy(
+                        isImportingPhoto = false,
+                        instantPrintPreview = InstantPrintPreview(
+                            developedPath = result.developedPath,
+                            originalPath = result.originalPath,
+                            filmName = state.selectedFilm.name,
+                            filmCode = state.selectedFilm.code,
+                            bodyName = state.selectedBody.name,
+                            lensLabel = "${state.selectedLens.focalLabel} ${state.selectedLens.maxAperture}",
+                            caption = "${state.selectedFilm.name} · ${state.selectedBody.name}",
+                            isImportedFromGallery = true,
+                            frameNumber = (activeRoll.value?.shotsTaken ?: 0) + 1,
+                            revealType = revealKind
+                        )
+                    )
+                }
+            } catch (_: Throwable) {
+                _uiState.update { it.copy(isImportingPhoto = false) }
+                showToast("Erreur lors du développement de l'import.")
+            }
+        }
+    }
+
+    fun dismissInstantPreview() {
+        _uiState.update { it.copy(instantPrintPreview = null) }
+    }
+
+    fun updateInstantPreviewNote(note: String) {
+        val clean = note.take(72)
+        val frameId = _uiState.value.instantPrintPreview?.frameId
+        _uiState.update { state ->
+            state.copy(instantPrintPreview = state.instantPrintPreview?.copy(handwrittenNote = clean))
+        }
+        if (frameId != null) {
+            viewModelScope.launch { repository.updateFrameCaption(frameId, clean) }
+        }
+    }
+
+    fun renameRoll(rollId: Long, newTitle: String) {
+        playDetent()
+        viewModelScope.launch {
+            repository.renameRoll(rollId, newTitle)
+            val label = newTitle.trim().ifEmpty { "numéro d'archive" }
+            showToast("Rouleau renommé : $label")
+        }
+    }
+
+    fun updateFrameCaption(frameId: Long, caption: String) {
+        viewModelScope.launch {
+            repository.updateFrameCaption(frameId, caption)
+        }
+    }
+
+    fun exportInstantPreview(asGalleryCard: Boolean, story916: Boolean = false) {
+        val preview = _uiState.value.instantPrintPreview ?: return
+        val sourceFile = File(preview.developedPath)
+        if (!sourceFile.exists()) return
+        val lossless = settings.value.exportLosslessPng
+        val prefix = "PELOCHE_${preview.filmCode}_${System.currentTimeMillis() % 100000}"
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                if (asGalleryCard) {
+                    val (_, uri) = ExifAndExportManager.exportGalleryPrintCard(
+                        context = getApplication(),
+                        sourceFile = sourceFile,
+                        caption = preview.caption,
+                        filePrefix = prefix,
+                        storyFormat916 = story916,
+                        losslessPng = lossless,
+                        handwrittenNote = preview.handwrittenNote
+                    )
+                    uri != null
+                } else {
+                    ExifAndExportManager.exportFrameWithOptionalNote(
+                        context = getApplication(),
+                        sourceFile = sourceFile,
+                        handwrittenNote = preview.handwrittenNote,
+                        displayName = "$prefix.${if (lossless) "png" else "jpg"}",
+                        losslessPng = lossless
+                    ) != null
+                }
+            }
+            if (ok) {
+                val label = when {
+                    asGalleryCard && story916 -> "Story Galerie 9:16"
+                    asGalleryCard -> "Carte Galerie 4:5"
+                    else -> "Tirage argentique"
+                }
+                showToast("$label enregistré dans DCIM/Peloche !")
+            } else {
+                showToast("Exportation impossible sur cet appareil.")
+            }
+        }
+    }
+
+    fun shareInstantPreview(asGalleryCard: Boolean, story916: Boolean = false) {
+        val preview = _uiState.value.instantPrintPreview ?: return
+        val sourceFile = File(preview.developedPath)
+        if (!sourceFile.exists()) return
+        val lossless = settings.value.exportLosslessPng
+        val prefix = "PELOCHE_${preview.filmCode}_${System.currentTimeMillis() % 100000}"
+        viewModelScope.launch {
+            val fileToShare = if (asGalleryCard) {
+                withContext(Dispatchers.IO) {
+                    ExifAndExportManager.exportGalleryPrintCard(
+                        context = getApplication(),
+                        sourceFile = sourceFile,
+                        caption = preview.caption,
+                        filePrefix = prefix,
+                        storyFormat916 = story916,
+                        losslessPng = lossless,
+                        handwrittenNote = preview.handwrittenNote
+                    ).first
+                }
+            } else {
+                sourceFile
+            }
+            if (fileToShare == null || !ExifAndExportManager.shareImageFile(
+                    getApplication(),
+                    fileToShare,
+                    "Partager ${preview.caption}"
+                )
+            ) {
+                showToast("Partage indisponible.")
             }
         }
     }
@@ -748,6 +1346,8 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
                 roll = roll,
                 method = method,
                 losslessPng = currentSettings.exportLosslessPng,
+                includeFrameBorder = currentSettings.frameBorderEnabled,
+                lightLeakMode = currentSettings.lightLeakMode,
                 onProgress = { progress, text ->
                     _uiState.update {
                         it.copy(
@@ -808,13 +1408,14 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
         val film = HardwareCatalog.filmById(frame.filmId)
         viewModelScope.launch {
             val uri = withContext(Dispatchers.IO) {
-                ExifAndExportManager.exportFileToMediaStore(
+                ExifAndExportManager.exportFrameWithOptionalNote(
                     context = getApplication(),
                     sourceFile = file,
+                    handwrittenNote = frame.caption,
                     displayName = "PELOCHE_R%03d_%s_F%02d.%s".format(
                         roll.rollNumber, film.code, frame.frameNumber, if (isPng) "png" else "jpg"
                     ),
-                    mimeType = if (isPng) "image/png" else "image/jpeg"
+                    losslessPng = isPng
                 )
             }
             if (uri != null) {
@@ -837,13 +1438,14 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
                     val file = File(path)
                     if (!file.exists()) return@forEach
                     val isPng = path.endsWith(".png", ignoreCase = true)
-                    val uri = ExifAndExportManager.exportFileToMediaStore(
+                    val uri = ExifAndExportManager.exportFrameWithOptionalNote(
                         context = getApplication(),
                         sourceFile = file,
+                        handwrittenNote = frame.caption,
                         displayName = "PELOCHE_R%03d_%s_F%02d.%s".format(
                             roll.rollNumber, film.code, frame.frameNumber, if (isPng) "png" else "jpg"
                         ),
-                        mimeType = if (isPng) "image/png" else "image/jpeg"
+                        losslessPng = isPng
                     )
                     if (uri != null) ok++
                 }
@@ -860,8 +1462,69 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
     fun shareSingleFrame(frame: FilmFrameEntity, roll: FilmRollEntity) {
         val path = frame.developedPath ?: return
         val file = File(path)
-        if (!ExifAndExportManager.shareImageFile(getApplication(), file, "Partager la vue %02dA (N°%03d)".format(frame.frameNumber, roll.rollNumber))) {
+        if (!ExifAndExportManager.shareImageFile(getApplication(), file, "Partager la vue %02dA (${roll.displayTitle})".format(frame.frameNumber))) {
             showToast("Partage indisponible pour cette vue.")
+        }
+    }
+
+    fun exportGalleryCardForFrame(frame: FilmFrameEntity, roll: FilmRollEntity, story916: Boolean) {
+        val path = frame.developedPath ?: return
+        val file = File(path)
+        if (!file.exists()) return
+        val body = HardwareCatalog.bodyById(frame.bodyId)
+        val film = HardwareCatalog.filmById(frame.filmId)
+        val caption = "${film.name} · ${body.name}"
+        val prefix = "PELOCHE_R%03d_%s_F%02d".format(roll.rollNumber, film.code, frame.frameNumber)
+        val lossless = settings.value.exportLosslessPng
+        viewModelScope.launch {
+            val (_, uri) = withContext(Dispatchers.IO) {
+                ExifAndExportManager.exportGalleryPrintCard(
+                    context = getApplication(),
+                    sourceFile = file,
+                    caption = caption,
+                    filePrefix = prefix,
+                    storyFormat916 = story916,
+                    losslessPng = lossless,
+                    handwrittenNote = frame.caption
+                )
+            }
+            if (uri != null) {
+                showToast(if (story916) "Story Galerie 9:16 enregistrée !" else "Carte Galerie 4:5 enregistrée !")
+            } else {
+                showToast("Exportation impossible sur cet appareil.")
+            }
+        }
+    }
+
+    fun shareGalleryCardForFrame(frame: FilmFrameEntity, roll: FilmRollEntity, story916: Boolean) {
+        val path = frame.developedPath ?: return
+        val file = File(path)
+        if (!file.exists()) return
+        val body = HardwareCatalog.bodyById(frame.bodyId)
+        val film = HardwareCatalog.filmById(frame.filmId)
+        val caption = "${film.name} · ${body.name}"
+        val prefix = "PELOCHE_R%03d_%s_F%02d".format(roll.rollNumber, film.code, frame.frameNumber)
+        val lossless = settings.value.exportLosslessPng
+        viewModelScope.launch {
+            val (outFile, _) = withContext(Dispatchers.IO) {
+                ExifAndExportManager.exportGalleryPrintCard(
+                    context = getApplication(),
+                    sourceFile = file,
+                    caption = caption,
+                    filePrefix = prefix,
+                    storyFormat916 = story916,
+                    losslessPng = lossless,
+                    handwrittenNote = frame.caption
+                )
+            }
+            if (outFile == null || !ExifAndExportManager.shareImageFile(
+                    getApplication(),
+                    outFile,
+                    "Partager Tirage Galerie ($caption)"
+                )
+            ) {
+                showToast("Partage indisponible.")
+            }
         }
     }
 
@@ -923,11 +1586,154 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch { settingsStore.toggleFavoriteFilm(filmId) }
     }
     fun updateLosslessPng(enabled: Boolean) = viewModelScope.launch { settingsStore.setExportLosslessPng(enabled) }
+    fun updateFrameBorder(enabled: Boolean) = viewModelScope.launch {
+        playDetent()
+        settingsStore.setFrameBorderEnabled(enabled)
+    }
     fun updateDiptych(enabled: Boolean) = viewModelScope.launch {
         settingsStore.setDiptychEnabled(enabled)
         persistRollHardwareUpdate(diptychOverride = enabled)
     }
     fun updateSampleSceneNight(isNight: Boolean) = viewModelScope.launch { settingsStore.setSampleSceneNight(isNight) }
+    fun updateInstantPreview(enabled: Boolean) = viewModelScope.launch {
+        playDetent()
+        settingsStore.setInstantPreviewEnabled(enabled)
+    }
+    fun updateAnimatedEffects(enabled: Boolean) = viewModelScope.launch {
+        playDetent()
+        settingsStore.setAnimatedEffectsEnabled(enabled)
+    }
+    fun updateLightLeakMode(mode: com.example.domain.model.LightLeakMode) = viewModelScope.launch {
+        playDetent()
+        settingsStore.setLightLeakMode(mode)
+        showToast("Fuites de lumière : ${mode.labelFr}")
+    }
+
+    // Saved Combos ("Mes Combos" presets)
+    fun saveCurrentComboPreset() {
+        playDetent()
+        val state = _uiState.value
+        val s = settings.value
+        val preset = SavedComboPreset(
+            id = "combo_${System.currentTimeMillis()}",
+            name = "${state.selectedFilm.name} · ${state.selectedBody.shortCode}",
+            bodyId = state.selectedBody.id,
+            lensId = state.selectedLens.id,
+            filmId = state.selectedFilm.id,
+            dateStampStyleName = s.effectiveDateStampStyle.name
+        )
+        viewModelScope.launch {
+            settingsStore.saveComboPreset(preset)
+        }
+        showToast("Combo sauvegardé : ${preset.name}")
+    }
+
+    fun applyComboPreset(preset: SavedComboPreset) {
+        playDetent()
+        val body = HardwareCatalog.bodyById(preset.bodyId)
+        val rawLens = HardwareCatalog.lensById(preset.lensId)
+        val lens = if (HardwareCatalog.isLensCompatible(rawLens, body)) rawLens else HardwareCatalog.defaultLensFor(body)
+        val film = HardwareCatalog.filmById(preset.filmId)
+        val dateStyle = runCatching { DateStampStyle.valueOf(preset.dateStampStyleName) }
+            .getOrDefault(DateStampStyle.QUARTZ_90S)
+
+        val existingForBody = inProgressRollsByBody.value[body.id]
+        val diptych = settings.value.diptychEnabled
+        viewModelScope.launch {
+            settingsStore.setDateStampStyle(dateStyle)
+            val switched = repository.switchToBody(
+                body = body,
+                preferredLens = lens,
+                preferredFilm = film,
+                preferredExpiration = FilmExpirationDate.freshDefault(),
+                isDiptychMode = diptych
+            )
+            val finalRoll = if (switched.shotsTaken == 0) {
+                repository.updateActiveRollHardware(
+                    roll = switched,
+                    body = body,
+                    lens = lens,
+                    film = film,
+                    expirationDate = switched.expirationDate,
+                    isDiptychMode = diptych
+                )
+            } else {
+                repository.updateActiveRollHardware(
+                    roll = switched,
+                    body = body,
+                    lens = lens,
+                    film = HardwareCatalog.filmById(switched.filmId),
+                    expirationDate = switched.expirationDate,
+                    isDiptychMode = diptych
+                )
+            }
+            syncUiToRoll(finalRoll, notifyIfExpired = false)
+            if (existingForBody != null && existingForBody.shotsTaken > 0 && existingForBody.filmId != film.id) {
+                showToast("${body.shortCode} chargé (${existingForBody.shotsTaken}/${existingForBody.maxExposures}) : objectif & dateur appliqués.")
+            } else {
+                showToast("Combo appliqué : ${preset.name}")
+            }
+        }
+    }
+
+    fun applyCuratedEraCombo(combo: CuratedEraCombo) {
+        playDetent()
+        val body = HardwareCatalog.bodyById(combo.bodyId)
+        val rawLens = HardwareCatalog.lensById(combo.lensId)
+        val lens = if (HardwareCatalog.isLensCompatible(rawLens, body)) rawLens else HardwareCatalog.defaultLensFor(body)
+        val film = HardwareCatalog.filmById(combo.filmId)
+        val existingForBody = inProgressRollsByBody.value[body.id]
+        val diptych = settings.value.diptychEnabled
+        viewModelScope.launch {
+            val switched = repository.switchToBody(
+                body = body,
+                preferredLens = lens,
+                preferredFilm = film,
+                preferredExpiration = FilmExpirationDate.freshDefault(),
+                isDiptychMode = diptych
+            )
+            val finalRoll = if (switched.shotsTaken == 0) {
+                repository.updateActiveRollHardware(
+                    roll = switched,
+                    body = body,
+                    lens = lens,
+                    film = film,
+                    expirationDate = switched.expirationDate,
+                    isDiptychMode = diptych
+                )
+            } else {
+                repository.updateActiveRollHardware(
+                    roll = switched,
+                    body = body,
+                    lens = lens,
+                    film = HardwareCatalog.filmById(switched.filmId),
+                    expirationDate = switched.expirationDate,
+                    isDiptychMode = diptych
+                )
+            }
+            syncUiToRoll(finalRoll, notifyIfExpired = false)
+            if (existingForBody != null && existingForBody.shotsTaken > 0 && existingForBody.filmId != film.id) {
+                showToast("${body.shortCode} déjà chargé (${existingForBody.shotsTaken}/${existingForBody.maxExposures}) : objectif monté.")
+            } else {
+                showToast("Kit ${combo.eraBadge} monté : ${combo.title}")
+            }
+        }
+    }
+
+    fun toggleGreasePencilFrame(frameId: Long) {
+        playDetent()
+        viewModelScope.launch {
+            settingsStore.toggleGreasePencilFrame(frameId)
+        }
+    }
+
+    fun deleteComboPreset(presetId: String) {
+        playDetent()
+        viewModelScope.launch {
+            settingsStore.deleteComboPreset(presetId)
+        }
+        showToast("Combo supprimé.")
+    }
 
     fun clearToast() {
         _uiState.update { it.copy(activeToastMessage = null) }
@@ -961,5 +1767,56 @@ class ArgentiqueViewModel(application: Application) : AndroidViewModel(applicati
     private suspend fun loadSampleBitmap(isNight: Boolean): Bitmap = withContext(Dispatchers.IO) {
         val resId = if (isNight) R.drawable.img_sample_scene_night else R.drawable.img_sample_scene_day
         BitmapFactory.decodeResource(getApplication<Application>().resources, resId)
+    }
+
+    private suspend fun decodeOrientedBitmapFromUri(uri: Uri, maxEdge: Int): Bitmap? = withContext(Dispatchers.IO) {
+        val resolver = getApplication<Application>().contentResolver
+        val orientation = resolver.openInputStream(uri)?.use { stream ->
+            runCatching {
+                ExifInterface(stream).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
+            }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+        } ?: ExifInterface.ORIENTATION_NORMAL
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
+
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxEdge * 2) {
+            sample *= 2
+        }
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val raw = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+            ?: return@withContext null
+
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.postRotate(90f); matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.postRotate(270f); matrix.postScale(-1f, 1f)
+            }
+        }
+        val curMax = maxOf(raw.width, raw.height)
+        if (curMax > maxEdge) {
+            val s = maxEdge.toFloat() / curMax.toFloat()
+            matrix.postScale(s, s)
+        }
+        if (matrix.isIdentity) {
+            raw
+        } else {
+            val rotated = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, matrix, true)
+            if (rotated !== raw) raw.recycle()
+            rotated
+        }
     }
 }

@@ -15,6 +15,7 @@ import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.example.domain.model.CameraFlashMode
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -30,7 +31,9 @@ class CameraXController(private val context: Context) {
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
+    private var previewUseCase: Preview? = null
     private var imageCapture: ImageCapture? = null
+    private var currentFlashMode: CameraFlashMode = CameraFlashMode.OFF
     private var isBound = false
     private val bindTokenGenerator = AtomicLong(0L)
 
@@ -38,6 +41,7 @@ class CameraXController(private val context: Context) {
         lifecycleOwner: LifecycleOwner,
         surfaceHolder: CameraSurfaceHolder,
         isFrontCamera: Boolean,
+        targetRotation: Int = android.view.Surface.ROTATION_0,
         onBindResult: (Boolean) -> Unit
     ) {
         if (!surfaceHolder.isValid()) {
@@ -74,7 +78,9 @@ class CameraXController(private val context: Context) {
                     }
                 }
 
-                val preview = Preview.Builder().build()
+                val preview = Preview.Builder()
+                    .setTargetRotation(targetRotation)
+                    .build()
                 preview.setSurfaceProvider(mainExecutor) { request ->
                     if (bindTokenGenerator.get() != myToken) {
                         request.willNotProvideSurface()
@@ -97,8 +103,11 @@ class CameraXController(private val context: Context) {
 
                 val capture = ImageCapture.Builder()
                     .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                    .setFlashMode(toCameraXFlashMode(currentFlashMode))
+                    .setTargetRotation(targetRotation)
                     .build()
 
+                previewUseCase = preview
                 imageCapture = capture
                 camera = provider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
                 isBound = true
@@ -108,6 +117,28 @@ class CameraXController(private val context: Context) {
                 onBindResult(false)
             }
         }, mainExecutor)
+    }
+
+    fun setFlashMode(mode: CameraFlashMode) {
+        currentFlashMode = mode
+        try {
+            imageCapture?.flashMode = toCameraXFlashMode(mode)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun toCameraXFlashMode(mode: CameraFlashMode): Int = when (mode) {
+        CameraFlashMode.OFF -> ImageCapture.FLASH_MODE_OFF
+        CameraFlashMode.AUTO -> ImageCapture.FLASH_MODE_AUTO
+        CameraFlashMode.ON -> ImageCapture.FLASH_MODE_ON
+    }
+
+    fun updateTargetRotation(rotation: Int) {
+        try {
+            previewUseCase?.targetRotation = rotation
+            imageCapture?.targetRotation = rotation
+        } catch (_: Throwable) {
+        }
     }
 
     fun setExposureCompensationEv(ev: Float) {
@@ -208,6 +239,7 @@ class CameraXController(private val context: Context) {
         } catch (_: Throwable) {
         }
         camera = null
+        previewUseCase = null
         imageCapture = null
     }
 }

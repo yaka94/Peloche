@@ -4,6 +4,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,11 +32,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Compare
+import androidx.compose.material.icons.filled.CropPortrait
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -41,6 +48,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -51,15 +59,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -70,7 +81,13 @@ import com.example.data.local.FilmFrameEntity
 import com.example.data.local.FilmRollEntity
 import com.example.domain.model.HardwareCatalog
 import com.example.ui.components.CinemaClapperCard
+import com.example.ui.components.HandwrittenNoteInput
 import com.example.ui.components.MachinedScrewHead
+import com.example.ui.components.MuseumCaptionGrey
+import com.example.ui.components.MuseumHairline
+import com.example.ui.components.MuseumInkDark
+import com.example.ui.components.MuseumPaperCream
+import com.example.ui.components.RenameRollDialog
 import com.example.ui.components.blackLeatherTexture
 import com.example.ui.components.brushedMetalPlate
 import com.example.ui.components.recessedInstrumentWell
@@ -93,12 +110,18 @@ import java.util.Locale
 fun ContactSheetScreen(
     roll: FilmRollEntity,
     frames: List<FilmFrameEntity>,
+    greasePencilMarks: Set<Long>,
+    onToggleGreasePencil: (Long) -> Unit,
     onBack: () -> Unit,
+    onRenameRoll: (String) -> Unit,
+    onUpdateFrameCaption: (FilmFrameEntity, String) -> Unit,
     onExportContactSheet: () -> Unit,
     onExportAllFrames: () -> Unit,
     onShareContactSheet: () -> Unit,
     onExportSingleFrame: (FilmFrameEntity) -> Unit,
-    onShareSingleFrame: (FilmFrameEntity) -> Unit
+    onShareSingleFrame: (FilmFrameEntity) -> Unit,
+    onExportGalleryCard: (FilmFrameEntity, Boolean) -> Unit,
+    onShareGalleryCard: (FilmFrameEntity, Boolean) -> Unit
 ) {
     val body = HardwareCatalog.bodyById(roll.bodyId)
     val lens = HardwareCatalog.lensById(roll.lensId)
@@ -107,14 +130,18 @@ fun ContactSheetScreen(
     val exp = roll.expirationDate
 
     var inspectedIndex by remember { mutableStateOf<Int?>(null) }
+    var showRenameDialog by remember { mutableStateOf(false) }
     var columnsPerStrip by remember { mutableIntStateOf(3) }
-    // Red grease-pencil selections ("Coup de cœur" darkroom contact-sheet curation)
-    var greasePencilMarks by remember(roll.id) { mutableStateOf<Set<Long>>(emptySet()) }
+    // Persisted red grease-pencil selections scoped to this roll's frames
+    val rollFrameIds = remember(frames) { frames.map { it.id }.toSet() }
+    val rollMarkedIds = remember(greasePencilMarks, rollFrameIds) {
+        greasePencilMarks.intersect(rollFrameIds)
+    }
     var showMarkedOnly by remember(roll.id) { mutableStateOf(false) }
 
-    val visibleFrames = remember(frames, greasePencilMarks, showMarkedOnly) {
-        if (showMarkedOnly && greasePencilMarks.isNotEmpty()) {
-            frames.filter { it.id in greasePencilMarks }
+    val visibleFrames = remember(frames, rollMarkedIds, showMarkedOnly) {
+        if (showMarkedOnly && rollMarkedIds.isNotEmpty()) {
+            frames.filter { it.id in rollMarkedIds }
         } else {
             frames
         }
@@ -163,14 +190,35 @@ fun ContactSheetScreen(
                     )
                 }
 
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 6.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { showRenameDialog = true }
+                        .padding(vertical = 2.dp)
+                        .testTag("contact_sheet_rename_title")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = roll.displayTitle,
+                            style = MaterialTheme.typography.titleLarge,
+                            color = FilmCream,
+                            maxLines = 1
+                        )
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = "Renommer ce rouleau",
+                            tint = BrassAccent.copy(alpha = 0.85f),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
                     Text(
-                        text = "Planche-Contact N°%03d".format(roll.rollNumber),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = FilmCream
-                    )
-                    Text(
-                        text = "${film.code} • ${dev.shortBadge} (EI ${dev.effectiveIso(film.iso)}) • ${frames.size} VUES",
+                        text = "N°%03d • ${film.code} • ${dev.shortBadge} (EI ${dev.effectiveIso(film.iso)}) • ${frames.size} VUES".format(roll.rollNumber),
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                         color = KodakAmber
                     )
@@ -304,7 +352,7 @@ fun ContactSheetScreen(
                             Text("Tout exporter", style = MaterialTheme.typography.labelMedium, color = SilverChrome)
                         }
 
-                        if (greasePencilMarks.isNotEmpty()) {
+                        if (rollMarkedIds.isNotEmpty()) {
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
@@ -323,7 +371,7 @@ fun ContactSheetScreen(
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Text(
-                                    text = "${greasePencilMarks.size}",
+                                    text = "${rollMarkedIds.size}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FilmCream,
                                     fontWeight = FontWeight.Bold
@@ -341,18 +389,12 @@ fun ContactSheetScreen(
                     columns = columnsPerStrip,
                     filmCode = film.code,
                     aspectRatio = body.aspectRatioSpec.aspectRatio.coerceIn(0.70f, 2.3f),
-                    markedFrameIds = greasePencilMarks,
+                    markedFrameIds = rollMarkedIds,
                     onFrameClick = { clicked ->
                         val idx = frames.indexOfFirst { it.id == clicked.id }
                         if (idx >= 0) inspectedIndex = idx
                     },
-                    onToggleMark = { frameId ->
-                        greasePencilMarks = if (frameId in greasePencilMarks) {
-                            greasePencilMarks - frameId
-                        } else {
-                            greasePencilMarks + frameId
-                        }
-                    }
+                    onToggleMark = { frameId -> onToggleGreasePencil(frameId) }
                 )
             }
 
@@ -364,27 +406,33 @@ fun ContactSheetScreen(
     inspectedIndex?.let { currentIdx ->
         val frame = frames.getOrNull(currentIdx)
         if (frame != null) {
-            val isMarked = frame.id in greasePencilMarks
+            val isMarked = frame.id in rollMarkedIds
             FrameLoupeDialog(
                 roll = roll,
                 frame = frame,
                 frameIndex = currentIdx,
                 totalFrames = frames.size,
                 isMarked = isMarked,
-                onToggleMark = {
-                    greasePencilMarks = if (isMarked) {
-                        greasePencilMarks - frame.id
-                    } else {
-                        greasePencilMarks + frame.id
-                    }
-                },
+                onToggleMark = { onToggleGreasePencil(frame.id) },
                 onPrevious = { if (currentIdx > 0) inspectedIndex = currentIdx - 1 },
                 onNext = { if (currentIdx < frames.lastIndex) inspectedIndex = currentIdx + 1 },
                 onDismiss = { inspectedIndex = null },
                 onExportFrame = { onExportSingleFrame(frame) },
-                onShareFrame = { onShareSingleFrame(frame) }
+                onShareFrame = { onShareSingleFrame(frame) },
+                onExportGalleryPost = { onExportGalleryCard(frame, false) },
+                onExportGalleryStory = { onExportGalleryCard(frame, true) },
+                onShareGalleryCard = { onShareGalleryCard(frame, false) },
+                onUpdateCaption = { note -> onUpdateFrameCaption(frame, note) }
             )
         }
+    }
+
+    if (showRenameDialog) {
+        RenameRollDialog(
+            roll = roll,
+            onDismiss = { showRenameDialog = false },
+            onConfirm = onRenameRoll
+        )
     }
 }
 
@@ -525,7 +573,11 @@ private fun FrameLoupeDialog(
     onNext: () -> Unit,
     onDismiss: () -> Unit,
     onExportFrame: () -> Unit,
-    onShareFrame: () -> Unit
+    onShareFrame: () -> Unit,
+    onExportGalleryPost: () -> Unit,
+    onExportGalleryStory: () -> Unit,
+    onShareGalleryCard: () -> Unit,
+    onUpdateCaption: (String) -> Unit
 ) {
     val body = HardwareCatalog.bodyById(frame.bodyId)
     val lens = HardwareCatalog.lensById(frame.lensId)
@@ -534,6 +586,20 @@ private fun FrameLoupeDialog(
     val dev = roll.developmentMethod
     val fmt = remember { SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.FRENCH) }
 
+    var galleryMode by remember { mutableStateOf(true) }
+    var holdingOriginal by remember(frame.id) { mutableStateOf(false) }
+    var noteDraft by remember(frame.id, frame.caption) { mutableStateOf(frame.caption) }
+
+    val devFile = remember(frame.developedPath) { frame.developedPath?.let { File(it) } }
+    val origFile = remember(frame.developedPath, frame.frameNumber) {
+        devFile?.parentFile?.let { dir -> File(dir, "orig_F%02d.jpg".format(frame.frameNumber)) }
+    }
+    val hasOriginal = origFile != null && origFile.exists()
+
+    val bgColor = if (galleryMode) MuseumPaperCream else Color(0xF50A0908)
+    val primaryInk = if (galleryMode) MuseumInkDark else FilmCream
+    val secondaryInk = if (galleryMode) MuseumCaptionGrey else WarmEngraving
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -541,25 +607,61 @@ private fun FrameLoupeDialog(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xF50A0908))
+                .background(bgColor)
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(14.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top bar with frame position, grease-pencil mark & close
+            // Top bar: Mode Toggle (Galerie / Chambre noire), Favorite & Close
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "VUE %02dA (${frameIndex + 1}/$totalFrames) • N°%03d".format(frame.frameNumber, roll.rollNumber),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = KodakAmber
-                )
+                // Segmented Museum Print vs Darkroom EXIF Mode Switch
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(if (galleryMode) Color(0xFFE7E3D8) else Color(0xFF1A1C22))
+                        .border(1.dp, if (galleryMode) MuseumHairline else HairlineMetal, RoundedCornerShape(20.dp))
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (galleryMode) MuseumInkDark else Color.Transparent)
+                            .clickable { galleryMode = true }
+                            .padding(horizontal = 11.dp, vertical = 6.dp)
+                            .testTag("loupe_mode_gallery")
+                    ) {
+                        Text(
+                            text = "Galerie",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (galleryMode) MuseumPaperCream else SilverChrome,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (!galleryMode) BrassAccent else Color.Transparent)
+                            .clickable { galleryMode = false }
+                            .padding(horizontal = 11.dp, vertical = 6.dp)
+                            .testTag("loupe_mode_darkroom")
+                    ) {
+                        Text(
+                            text = "Labo & EXIF",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (!galleryMode) MatteLeather else MuseumCaptionGrey,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
@@ -569,130 +671,299 @@ private fun FrameLoupeDialog(
                         Icon(
                             imageVector = if (isMarked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                             contentDescription = "Marquer comme coup de cœur",
-                            tint = if (isMarked) LeicaCrimson else SilverChrome
+                            tint = if (isMarked) LeicaCrimson else secondaryInk
                         )
                     }
                     IconButton(onClick = onDismiss) {
                         Icon(
                             imageVector = Icons.Filled.Close,
                             contentDescription = "Fermer l'aperçu",
-                            tint = FilmCream
+                            tint = primaryInk
                         )
                     }
                 }
             }
 
-            // Full Photo + Overlay Previous/Next Controls
-            Box(
+            // Full Photo + Press & Hold Avant/Après + Previous/Next Controls
+            Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
+                    .padding(vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                val file = frame.developedPath?.let { File(it) }
-                if (file != null && file.exists()) {
-                    AsyncImage(
-                        model = file,
-                        contentDescription = "Photo développée ${frame.frameNumber}",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(6.dp))
-                    )
+                Box(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (devFile != null && devFile.exists()) {
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = if (galleryMode) 12.dp else 0.dp)
+                                .pointerInput(hasOriginal, frame.id) {
+                                    if (hasOriginal) {
+                                        awaitEachGesture {
+                                            awaitFirstDown(requireUnconsumed = false)
+                                            holdingOriginal = true
+                                            waitForUpOrCancellation()
+                                            holdingOriginal = false
+                                        }
+                                    }
+                                }
+                                .testTag("loupe_compare_surface"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier.then(
+                                    if (galleryMode) {
+                                        Modifier.shadow(
+                                            elevation = 22.dp,
+                                            shape = RoundedCornerShape(3.dp),
+                                            ambientColor = Color(0x55181512),
+                                            spotColor = Color(0x66181512)
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                ),
+                                color = Color.Transparent,
+                                shape = RoundedCornerShape(if (galleryMode) 3.dp else 6.dp)
+                            ) {
+                                AsyncImage(
+                                    model = if (holdingOriginal && hasOriginal) origFile else devFile,
+                                    contentDescription = "Photo développée ${frame.frameNumber}",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(if (galleryMode) 3.dp else 6.dp))
+                                )
+                            }
+                        }
+                    }
+
+                    // Avant/Après hold indicator pill
+                    if (hasOriginal) {
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(6.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (holdingOriginal) LeicaCrimson
+                                    else if (galleryMode) Color(0xDDE7E3D8)
+                                    else Color(0xAA101116)
+                                )
+                                .padding(horizontal = 9.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Compare,
+                                contentDescription = null,
+                                tint = if (holdingOriginal) Color.White else primaryInk,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = if (holdingOriginal) "ORIGINAL" else "Maintenir : Avant",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                color = if (holdingOriginal) Color.White else primaryInk,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (frameIndex > 0) {
+                        IconButton(
+                            onClick = onPrevious,
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(if (galleryMode) Color(0xCCE7E3D8) else Color(0xAA121110))
+                                .border(1.dp, if (galleryMode) MuseumHairline else HairlineMetal, CircleShape)
+                                .testTag("loupe_prev_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "Vue précédente",
+                                tint = primaryInk
+                            )
+                        }
+                    }
+                    if (frameIndex < totalFrames - 1) {
+                        IconButton(
+                            onClick = onNext,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(if (galleryMode) Color(0xCCE7E3D8) else Color(0xAA121110))
+                                .border(1.dp, if (galleryMode) MuseumHairline else HairlineMetal, CircleShape)
+                                .testTag("loupe_next_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "Vue suivante",
+                                tint = primaryInk
+                            )
+                        }
+                    }
                 }
 
-                if (frameIndex > 0) {
-                    IconButton(
-                        onClick = onPrevious,
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xAA121110))
-                            .border(1.dp, HairlineMetal, CircleShape)
-                            .testTag("loupe_prev_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                            contentDescription = "Vue précédente",
-                            tint = FilmCream
+                if (galleryMode) {
+                    Spacer(Modifier.height(12.dp))
+                    if (!holdingOriginal) {
+                        HandwrittenNoteInput(
+                            note = noteDraft,
+                            onNoteChange = { updated ->
+                                noteDraft = updated
+                                onUpdateCaption(updated)
+                            },
+                            testTag = "loupe_handwritten_note_input"
                         )
+                        Spacer(Modifier.height(6.dp))
                     }
-                }
-                if (frameIndex < totalFrames - 1) {
-                    IconButton(
-                        onClick = onNext,
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xAA121110))
-                            .border(1.dp, HairlineMetal, CircleShape)
-                            .testTag("loupe_next_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Vue suivante",
-                            tint = FilmCream
-                        )
-                    }
+                    Text(
+                        text = if (holdingOriginal) "Original numérique" else "${film.name} · ${body.name}",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 14.sp,
+                            letterSpacing = 0.5.sp,
+                            fontWeight = FontWeight.Normal
+                        ),
+                        color = MuseumCaptionGrey,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "Vue %02dA (${frameIndex + 1}/$totalFrames) • ${dev.shortBadge}".format(frame.frameNumber),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        color = MuseumCaptionGrey.copy(alpha = 0.72f),
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
 
-            // Enriched Analog EXIF Technical Card + Export & Share Actions
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .brushedMetalPlate(shape = RoundedCornerShape(12.dp))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Text(
-                    text = "MÉTADONNÉES EXIF ARGENTIQUES",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = BrassAccent
-                )
-                ExifLine("Boîtier", "${body.name} (${body.aspectRatioSpec.displayLabel})")
-                ExifLine("Objectif", "${lens.name} • ${lens.focalLabel} ${lens.maxAperture}")
-                ExifLine("Pellicule", "${film.name} (${film.emulsionType.labelFr}, ISO ${film.iso})")
-                ExifLine("Péremption", "${exp.stampCode} (${exp.severityLabel})")
-                ExifLine("Développement", "${dev.titleFr} • EI ${dev.effectiveIso(film.iso)}")
-                ExifLine("Exposition", "EV %+.1f IL • %s".format(frame.evCompensation, fmt.format(Date(frame.capturedAt))))
-
-                Spacer(Modifier.height(6.dp))
-                Row(
+            // Bottom Panel: Museum Export Bar OR Enriched Analog EXIF Technical Card
+            if (galleryMode) {
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Button(
-                        onClick = onExportFrame,
-                        colors = ButtonDefaults.buttonColors(containerColor = BrassAccent, contentColor = MatteLeather),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("export_single_frame_button")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(imageVector = Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Enregistrer", style = MaterialTheme.typography.labelLarge)
+                        OutlinedButton(
+                            onClick = onExportFrame,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("export_single_frame_button")
+                        ) {
+                            Icon(Icons.Filled.Download, contentDescription = null, tint = MuseumInkDark, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Brut", style = MaterialTheme.typography.labelMedium, color = MuseumInkDark, maxLines = 1)
+                        }
+                        OutlinedButton(
+                            onClick = onExportGalleryPost,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("export_gallery_45_button")
+                        ) {
+                            Icon(Icons.Filled.Photo, contentDescription = null, tint = MuseumInkDark, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Carte 4:5", style = MaterialTheme.typography.labelMedium, color = MuseumInkDark, maxLines = 1)
+                        }
+                        OutlinedButton(
+                            onClick = onExportGalleryStory,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("export_gallery_story_button")
+                        ) {
+                            Icon(Icons.Filled.CropPortrait, contentDescription = null, tint = MuseumInkDark, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Story 9:16", style = MaterialTheme.typography.labelMedium, color = MuseumInkDark, maxLines = 1)
+                        }
                     }
 
-                    OutlinedButton(
-                        onClick = onShareFrame,
+                    Button(
+                        onClick = onShareGalleryCard,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MuseumInkDark,
+                            contentColor = MuseumPaperCream
+                        ),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .height(48.dp)
                             .testTag("share_single_frame_button")
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Share,
-                            contentDescription = null,
-                            tint = BrassAccent,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Partager", style = MaterialTheme.typography.labelLarge, color = FilmCream)
+                        Icon(imageVector = Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Partager le Tirage Galerie", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .brushedMetalPlate(shape = RoundedCornerShape(12.dp))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        text = "MÉTADONNÉES EXIF ARGENTIQUES • VUE %02dA".format(frame.frameNumber),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = BrassAccent
+                    )
+                    ExifLine("Boîtier", "${body.name} (${body.aspectRatioSpec.displayLabel})")
+                    ExifLine("Objectif", "${lens.name} • ${lens.focalLabel} ${lens.maxAperture}")
+                    ExifLine("Pellicule", "${film.name} (${film.emulsionType.labelFr}, ISO ${film.iso})")
+                    ExifLine("Péremption", "${exp.stampCode} (${exp.severityLabel})")
+                    ExifLine("Développement", "${dev.titleFr} • EI ${dev.effectiveIso(film.iso)}")
+                    ExifLine("Exposition", "EV %+.1f IL • %s".format(frame.evCompensation, fmt.format(Date(frame.capturedAt))))
+
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = onExportFrame,
+                            colors = ButtonDefaults.buttonColors(containerColor = BrassAccent, contentColor = MatteLeather),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("export_single_frame_button")
+                        ) {
+                            Icon(imageVector = Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Enregistrer", style = MaterialTheme.typography.labelLarge)
+                        }
+
+                        OutlinedButton(
+                            onClick = onShareFrame,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("share_single_frame_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Share,
+                                contentDescription = null,
+                                tint = BrassAccent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Partager", style = MaterialTheme.typography.labelLarge, color = FilmCream)
+                        }
                     }
                 }
             }

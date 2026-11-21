@@ -34,11 +34,18 @@ object FilmCatalog {
         val sepia: Float = 0f,
         val cyano: Float = 0f,
         val ir: Float = 0f,
+        val orthoUv: Float = 0f,
+        val collodion: Float = 0f,
+        val daguerre: Float = 0f,
+        val autochrome: Float = 0f,
+        val paperFiber: Float = 0f,
+        val brushBorder: Float = 0f,
         val tagline: String
     )
 
     private fun FilmSeed.toModel(): FilmStockModel {
         val grainSize = when {
+            iso <= 15 -> 0.55f
             iso <= 50 -> 0.65f
             iso <= 100 -> 0.80f
             iso <= 200 -> 0.98f
@@ -48,6 +55,7 @@ object FilmCatalog {
             else -> 2.25f
         }
         val grainIntensity = when {
+            iso <= 15 -> 0.09f
             iso <= 50 -> 0.07f
             iso <= 100 -> 0.11f
             iso <= 200 -> 0.16f
@@ -84,11 +92,72 @@ object FilmCatalog {
             sepiaAmount = sepia,
             cyanotypeAmount = cyano,
             infraredAmount = ir,
+            orthoUvAmount = orthoUv,
+            collodionPlateAmount = collodion,
+            daguerreTarnishAmount = daguerre,
+            autochromeMosaicAmount = autochrome,
+            paperFiberAmount = paperFiber,
+            brushBorderAmount = brushBorder,
             tagline = tagline
         )
     }
 
     val allFilms: List<FilmStockModel> = listOf(
+        // ==================== 0A. ULTIMATE RÉTRO • PLAQUES XIXe (7) ====================
+        FilmSeed("film_wet_plate_collodion", "Collodion Humide", "CLD-1855", 2, FilmMood.HISTORICAL, EmulsionType.BLACK_AND_WHITE,
+            0xFF3E342A, 0xFFC5A87E, 0xFFF5EFE3, isMono = true, r = 0.22f, g = 0.85f, b = 1.65f, contrast = 1.24f, sat = 0.14f,
+            toe = 0.055f, shoulder = 0.22f, sR = 0.018f, sG = 0.014f, sB = 0.008f, hR = 0.025f, hG = 0.018f, sepia = 0.24f,
+            orthoUv = 0.96f, collodion = 0.96f,
+            tagline = "Ambrotype 1855 : réponse UV-bleu pure, rouges charbon, coulures de collodion aux coins et micro-bulles d'argent."),
+        FilmSeed("film_tintype_1856", "Ferrotype Tintype", "TIN-1856", 3, FilmMood.HISTORICAL, EmulsionType.BLACK_AND_WHITE,
+            0xFF282726, 0xFF9C9385, 0xFFF2ECE2, isMono = true, r = 0.28f, g = 0.88f, b = 1.55f, contrast = 1.14f, sat = 0.12f,
+            toe = 0.095f, shoulder = 0.28f, sR = 0.016f, sG = 0.014f, sB = 0.012f, sepia = 0.18f,
+            orthoUv = 0.88f, collodion = 0.82f,
+            tagline = "Plaque fer-blanc laquée 1856 : noirs étain relevés, blancs crème adoucis et patine de bain d'argent."),
+        FilmSeed("film_daguerreotype_1839", "Daguerréotype 1839", "DAG-1839", 1, FilmMood.HISTORICAL, EmulsionType.BLACK_AND_WHITE,
+            0xFF4A3D28, 0xFFD9B664, 0xFFF8F3E6, isMono = true, r = 0.35f, g = 0.92f, b = 1.48f, contrast = 1.32f, sat = 0.15f,
+            toe = 0.030f, shoulder = 0.18f, hR = 0.018f, hG = 0.016f, hB = 0.012f, sepia = 0.12f,
+            orthoUv = 0.82f, daguerre = 0.96f,
+            tagline = "Cuivre argenté poli à la vapeur de mercure : piqué miroir ciselé et couronne d'oxydation irisée bleu-bronze."),
+        FilmSeed("film_autochrome_lumiere_1907", "Autochrome 1907", "LUM-1907", 10, FilmMood.HISTORICAL, EmulsionType.COLOR_SLIDE,
+            0xFF6B4E35, 0xFFC85D3B, 0xFFF7F1E4, isMono = false, r = 1.09f, g = 1.03f, b = 0.88f, contrast = 1.04f, sat = 0.88f,
+            toe = 0.048f, shoulder = 0.26f, sR = 0.016f, sG = 0.012f, hR = 0.032f, hG = 0.022f, halation = 0.28f, sepia = 0.14f,
+            autochrome = 0.96f,
+            tagline = "Vraie plaque couleur Frères Lumière : mosaïque trichrome de fécule de pomme de terre et palette impressionniste."),
+        FilmSeed("film_calotype_salt_1845", "Calotype au Sel", "CAL-1845", 5, FilmMood.HISTORICAL, EmulsionType.BLACK_AND_WHITE,
+            0xFF5C4332, 0xFFE6D6BC, 0xFFF7F2E8, isMono = true, r = 0.60f, g = 0.96f, b = 1.24f, contrast = 0.98f, sat = 0.22f,
+            toe = 0.068f, shoulder = 0.32f, sR = 0.028f, sG = 0.010f, sB = 0.014f, sepia = 0.72f,
+            orthoUv = 0.55f, paperFiber = 0.88f, brushBorder = 0.52f,
+            tagline = "Tirage papier salé 1845 : fibre coton visible, ombres brun-prune veloutées et douceur picturale."),
+        FilmSeed("film_platinum_palladium_1880", "Platine-Palladium", "PT-1880", 12, FilmMood.HISTORICAL, EmulsionType.BLACK_AND_WHITE,
+            0xFF423E38, 0xFFD9CBB3, 0xFFF6F2EA, isMono = true, r = 0.96f, g = 1.02f, b = 1.02f, contrast = 1.06f, sat = 0.12f,
+            toe = 0.042f, shoulder = 0.34f, sR = 0.014f, sG = 0.011f, sB = 0.006f, hR = 0.020f, hG = 0.017f, sepia = 0.26f,
+            paperFiber = 0.52f,
+            tagline = "Tirage de musée aux sels nobles 1880 : dégradés infinis champagne-graphite, grain velours sans dureté."),
+        FilmSeed("film_cyanotype_brush_1842", "Cyanotype Pinceau", "CYN-1842", 6, FilmMood.HISTORICAL, EmulsionType.BLACK_AND_WHITE,
+            0xFF173D66, 0xFFEFE6D4, 0xFFF4F8FC, isMono = true, r = 0.42f, g = 0.92f, b = 1.38f, contrast = 1.22f, sat = 0.45f,
+            toe = 0.032f, shoulder = 0.20f, cyano = 0.96f,
+            orthoUv = 0.65f, paperFiber = 0.78f, brushBorder = 0.92f,
+            tagline = "Procédé solaire Anna Atkins 1842 : bleu de Prusse sur papier aquarelle avec bords étalés au pinceau."),
+
+        // ==================== 0. SIGNATURE ÉTÉ & BORD DE MER (4) ====================
+        FilmSeed("film_pastel_400", "Pastel 400", "PST-400", 400, FilmMood.PASTEL, EmulsionType.COLOR_NEGATIVE,
+            0xFF8CC4B4, 0xFFF3E4C6, 0xFF141816, r = 1.01f, g = 1.04f, b = 1.03f, contrast = 0.96f, sat = 0.90f,
+            toe = 0.048f, shoulder = 0.28f, sG = 0.024f, sB = 0.020f, hR = 0.030f, hG = 0.020f, halation = 0.24f,
+            tagline = "Eau turquoise douce, hautes lumières laiteuses et tons chair aériens."),
+        FilmSeed("film_riviera_200", "Riviera 200", "RIV-200", 200, FilmMood.PASTEL, EmulsionType.COLOR_NEGATIVE,
+            0xFFE2A83B, 0xFF3E8CA8, 0xFF141618, r = 1.04f, g = 1.02f, b = 1.05f, contrast = 1.02f, sat = 1.04f,
+            toe = 0.038f, shoulder = 0.26f, sB = 0.026f, sG = 0.014f, hR = 0.032f, hG = 0.022f, halation = 0.28f,
+            tagline = "Ciel cyan méditerranéen, sable doré et contraste estival lumineux."),
+        FilmSeed("film_picnic_400", "Picnic 400", "PIC-400", 400, FilmMood.GOLDEN, EmulsionType.COLOR_NEGATIVE,
+            0xFFE05232, 0xFFF5C947, 0xFF191410, r = 1.09f, g = 1.03f, b = 0.93f, contrast = 1.06f, sat = 1.14f,
+            toe = 0.035f, shoulder = 0.25f, sR = 0.022f, sG = 0.012f, hR = 0.042f, hG = 0.026f, halation = 0.36f,
+            tagline = "Chaleur solaire vibrante, parasols éclatants et halation dorée."),
+        FilmSeed("film_amber_200", "Amber 200", "AMB-200", 200, FilmMood.GOLDEN, EmulsionType.COLOR_NEGATIVE,
+            0xFFD48828, 0xFF287A68, 0xFF181410, r = 1.08f, g = 1.04f, b = 0.95f, contrast = 1.00f, sat = 1.02f,
+            toe = 0.044f, shoulder = 0.30f, sG = 0.028f, sB = 0.014f, hR = 0.046f, hG = 0.030f, halation = 0.44f,
+            tagline = "Halo solaire ambré, ombres émeraude et brume douce en contre-jour."),
+
         // ==================== 1. COULEUR (20) ====================
         FilmSeed("film_vivid_100", "Vivid 100", "VVD-100", 100, FilmMood.COLOR, EmulsionType.COLOR_SLIDE,
             0xFFD93829, 0xFFF2C94C, 0xFFF8F4EB, r = 1.06f, g = 1.02f, b = 1.04f, contrast = 1.22f, sat = 1.30f, sB = 0.02f, hR = 0.02f,
@@ -211,7 +280,7 @@ object FilmCatalog {
         FilmSeed("film_gold_200", "Or Classique 200", "GLD-200", 200, FilmMood.GOLDEN, EmulsionType.COLOR_NEGATIVE,
             0xFFE8B429, 0xFFB83224, 0xFF171410, r = 1.08f, g = 1.03f, b = 0.90f, contrast = 1.08f, sat = 1.12f, sR = 0.015f, hR = 0.035f, hG = 0.02f,
             tagline = "L'icône dorée des souvenirs d'été et couchers de soleil."),
-        FilmSeed("film_amber_200", "Amber 200", "AMB-200", 200, FilmMood.GOLDEN, EmulsionType.COLOR_NEGATIVE,
+        FilmSeed("film_amber_gold_200", "Ambre Doré 200", "AMG-200", 200, FilmMood.GOLDEN, EmulsionType.COLOR_NEGATIVE,
             0xFFD98829, 0xFF422712, 0xFF14100C, r = 1.10f, g = 1.02f, b = 0.87f, contrast = 1.10f, sat = 1.08f, toe = 0.03f, hR = 0.04f, hG = 0.025f,
             tagline = "Chaleur ambrée profonde et grain fin très harmonieux."),
         FilmSeed("film_phoenix_200", "Phénix 200", "PHX-200", 200, FilmMood.GOLDEN, EmulsionType.COLOR_NEGATIVE,
@@ -419,8 +488,8 @@ object FilmCatalog {
             0xFF246A73, 0xFFE89A2C, 0xFFF5F7F7, r = 1.04f, g = 1.02f, b = 1.04f, contrast = 1.24f, sat = 1.18f, sB = 0.06f, sG = 0.03f, hR = 0.055f, hG = 0.03f,
             tagline = "Séparation chromatique extrême entre ombres cyan et ors."),
         FilmSeed("film_vintage_chrome_100", "Autochrome 1920", "ATC-20", 100, FilmMood.EXPERIMENTAL, EmulsionType.COLOR_SLIDE,
-            0xFF8C6D46, 0xFFB8543B, 0xFFF7F1E6, r = 1.08f, g = 1.03f, b = 0.86f, contrast = 0.96f, sat = 0.78f, toe = 0.05f, sepia = 0.25f,
-            tagline = "Hommage aux plaques Autochrome Lumière à grain pigmenté."),
+            0xFF8C6D46, 0xFFB8543B, 0xFFF7F1E6, r = 1.08f, g = 1.03f, b = 0.86f, contrast = 0.96f, sat = 0.80f, toe = 0.05f, sepia = 0.20f, autochrome = 0.72f,
+            tagline = "Hommage aux plaques Autochrome Lumière à trame de fécule pigmentée."),
         FilmSeed("film_ultraviolet_400", "Ultraviolet 400", "UV-400", 400, FilmMood.EXPERIMENTAL, EmulsionType.COLOR_SLIDE,
             0xFF452C7A, 0xFF64B5F6, 0xFFF4F2FA, r = 1.02f, g = 0.94f, b = 1.18f, contrast = 1.24f, sat = 1.22f, sB = 0.06f, sR = 0.03f, hue = 0.08f,
             tagline = "Dominante indigo-violet surréaliste et contraste électrique.")

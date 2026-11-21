@@ -6,11 +6,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.CameraRoll
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Check
@@ -74,6 +77,7 @@ import com.example.R
 import com.example.data.local.CameraSettings
 import com.example.data.local.FilmRollEntity
 import com.example.domain.model.CameraBodyModel
+import com.example.domain.model.CuratedEraCombo
 import com.example.domain.model.FilmExpirationDate
 import com.example.domain.model.FilmMood
 import com.example.domain.model.FilmSortOption
@@ -81,7 +85,9 @@ import com.example.domain.model.FilmStockModel
 import com.example.domain.model.FilmTypeFilter
 import com.example.domain.model.HardwareCatalog
 import com.example.domain.model.LensModel
+import com.example.domain.model.SavedComboPreset
 import com.example.engine.CameraSurfaceHolder
+import com.example.ui.components.AnalogFrameContour
 import com.example.ui.components.CameraBodyThumbnail
 import com.example.ui.components.FilmCanisterThumbnail
 import com.example.ui.components.LensThumbnail
@@ -136,7 +142,11 @@ fun BoutiqueScreen(
     onToggleSampleNight: (Boolean) -> Unit,
     onSurfaceTextureReady: (CameraSurfaceHolder) -> Unit,
     onSurfaceTextureDestroyed: (CameraSurfaceHolder) -> Unit,
-    onOpenLaboToRewind: () -> Unit
+    onOpenLaboToRewind: () -> Unit,
+    onSaveCurrentCombo: () -> Unit,
+    onApplyComboPreset: (SavedComboPreset) -> Unit,
+    onDeleteComboPreset: (String) -> Unit,
+    onApplyCuratedEraCombo: (CuratedEraCombo) -> Unit
 ) {
     val activeTab = uiState.boutiqueFocusTab
     val rollLocked = (activeRoll?.shotsTaken ?: 0) > 0
@@ -221,6 +231,7 @@ fun BoutiqueScreen(
                     elevated = true
                 )
                 .statusBarsPadding()
+                .displayCutoutPadding()
                 .padding(horizontal = 10.dp, vertical = 7.dp)
         ) {
             MachinedScrewHead(size = 7.dp, modifier = Modifier.align(Alignment.TopStart))
@@ -317,132 +328,254 @@ fun BoutiqueScreen(
             }
         }
 
-        // ==================== 2. PINNED LIVE WYSIWYG OPTICAL PREVIEW ====================
-        Column(
+        // ==================== 2..5. ADAPTIVE PORTRAIT / LANDSCAPE BODY ====================
+        BoxWithConstraints(
             modifier = Modifier
+                .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 7.dp)
-                .brushedMetalPlate(shape = RoundedCornerShape(14.dp))
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(178.dp)
-                    .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                val frameRatio = uiState.selectedBody.aspectRatioSpec.aspectRatio.coerceIn(0.75f, 2.75f)
-                Box(
-                    modifier = Modifier
-                        .aspectRatio(frameRatio, matchHeightConstraintsFirst = true)
-                        .clip(RoundedCornerShape(3.dp))
-                ) {
-                    LiveOpticalPreviewSurface(
-                        params = uiState.liveOpticalParams,
-                        useCameraStream = previewUseCamera && hasCameraPermission,
-                        sampleSceneNight = settings.sampleSceneNight,
-                        onSurfaceTextureReady = onSurfaceTextureReady,
-                        onSurfaceTextureDestroyed = onSurfaceTextureDestroyed,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+            val isLandscape = maxWidth > maxHeight
 
-                // Preview Source Switcher Pills (Jour / Nuit / Live)
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xCC0B0B0D))
-                        .border(1.dp, HairlineMetal, RoundedCornerShape(8.dp))
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+            val previewSection: @Composable (Modifier, Boolean) -> Unit = { cardModifier, fillVertical ->
+                Column(
+                    modifier = cardModifier.brushedMetalPlate(shape = RoundedCornerShape(14.dp))
                 ) {
-                    PreviewSourcePill(
-                        label = "JOUR",
-                        icon = Icons.Filled.WbSunny,
-                        selected = !previewUseCamera && !settings.sampleSceneNight,
-                        onClick = {
-                            onSetPreviewUseCamera(false)
-                            onToggleSampleNight(false)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (fillVertical) Modifier.weight(1f) else Modifier.height(190.dp))
+                            .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+                            .background(Color(0xFF07080B)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AnalogFrameContour(
+                            body = uiState.selectedBody,
+                            film = uiState.selectedFilm,
+                            frameNumber = (activeRoll?.shotsTaken ?: 0) + 1,
+                            borderEnabled = settings.frameBorderEnabled,
+                            compact = true,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            LiveOpticalPreviewSurface(
+                                params = uiState.liveOpticalParams,
+                                useCameraStream = previewUseCamera && hasCameraPermission,
+                                sampleSceneNight = settings.sampleSceneNight,
+                                animatedEffectsEnabled = settings.animatedEffectsEnabled,
+                                onSurfaceTextureReady = onSurfaceTextureReady,
+                                onSurfaceTextureDestroyed = onSurfaceTextureDestroyed,
+                                modifier = Modifier.fillMaxSize()
+                            )
                         }
-                    )
-                    PreviewSourcePill(
-                        label = "NUIT",
-                        icon = Icons.Filled.DarkMode,
-                        selected = !previewUseCamera && settings.sampleSceneNight,
-                        onClick = {
-                            onSetPreviewUseCamera(false)
-                            onToggleSampleNight(true)
+
+                        // Preview Source Switcher Pills (Jour / Nuit / Live)
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xCC0B0B0D))
+                                .border(1.dp, HairlineMetal, RoundedCornerShape(8.dp))
+                                .padding(3.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            PreviewSourcePill(
+                                label = "JOUR",
+                                icon = Icons.Filled.WbSunny,
+                                selected = !previewUseCamera && !settings.sampleSceneNight,
+                                onClick = {
+                                    onSetPreviewUseCamera(false)
+                                    onToggleSampleNight(false)
+                                }
+                            )
+                            PreviewSourcePill(
+                                label = "NUIT",
+                                icon = Icons.Filled.DarkMode,
+                                selected = !previewUseCamera && settings.sampleSceneNight,
+                                onClick = {
+                                    onSetPreviewUseCamera(false)
+                                    onToggleSampleNight(true)
+                                }
+                            )
+                            if (hasCameraPermission) {
+                                PreviewSourcePill(
+                                    label = "LIVE",
+                                    icon = Icons.Filled.Videocam,
+                                    selected = previewUseCamera,
+                                    onClick = { onSetPreviewUseCamera(true) }
+                                )
+                            }
                         }
-                    )
-                    if (hasCameraPermission) {
-                        PreviewSourcePill(
-                            label = "LIVE",
-                            icon = Icons.Filled.Videocam,
-                            selected = previewUseCamera,
-                            onClick = { onSetPreviewUseCamera(true) }
+
+                        // Format + Focus mode pill
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(8.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xCC0B0B0D))
+                                .border(1.dp, HairlineMetal, RoundedCornerShape(6.dp))
+                                .padding(horizontal = 7.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "${uiState.selectedBody.aspectRatioSpec.formatBadge} • ${uiState.selectedBody.focusModeLabel}",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                color = if (uiState.selectedBody.isFixedFocusToyCam) KodakAmber else BrassAccent,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Docked camera LCD data strip directly below the frame
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp))
+                            .background(Color(0xFF0C0D11))
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${uiState.selectedBody.shortCode}  •  ${uiState.selectedLens.shortCode}  •  ${uiState.selectedFilm.name} (${uiState.selectedFilm.iso})",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FilmCream,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = uiState.selectedExpiration.stampCode,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (uiState.selectedExpiration.isExpired) KodakAmber else PositiveGreen,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
-
-                // Format + Focus mode pill
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xCC0B0B0D))
-                        .border(1.dp, HairlineMetal, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 7.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = "${uiState.selectedBody.aspectRatioSpec.formatBadge} • ${uiState.selectedBody.focusModeLabel}",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                        color = if (uiState.selectedBody.isFixedFocusToyCam) KodakAmber else BrassAccent,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
             }
 
-            // Docked camera LCD data strip directly below the frame
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp))
-                    .background(Color(0xFF0C0D11))
-                    .padding(horizontal = 12.dp, vertical = 7.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "${uiState.selectedBody.shortCode}  •  ${uiState.selectedLens.shortCode}  •  ${uiState.selectedFilm.name} (${uiState.selectedFilm.iso})",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = FilmCream,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = uiState.selectedExpiration.stampCode,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (uiState.selectedExpiration.isExpired) KodakAmber else PositiveGreen,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
+            val catalogSection: @Composable (Modifier) -> Unit = { paneModifier ->
+                Column(modifier = paneModifier) {
+                    // ==================== 2b. SAVED COMBOS ("MES COMBOS") QUICK STRIP ====================
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .testTag("boutique_saved_combos_row"),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        item(key = "save_current_combo") {
+                            Row(
+                                modifier = Modifier
+                                    .brushedMetalPlate(
+                                        shape = RoundedCornerShape(8.dp),
+                                        borderColor = BrassAccent.copy(alpha = 0.7f),
+                                        elevated = true
+                                    )
+                                    .clickable { onSaveCurrentCombo() }
+                                    .padding(horizontal = 9.dp, vertical = 6.dp)
+                                    .testTag("save_current_combo_button"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.BookmarkAdd,
+                                    contentDescription = "Sauver ce combo",
+                                    tint = BrassAccent,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "Sauver combo",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = FilmCream,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
 
-        // ==================== 3. HARDWARE CATEGORY TABS ====================
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 2.dp)
-                .recessedInstrumentWell(shape = RoundedCornerShape(10.dp))
-                .padding(3.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
+                        items(settings.savedCombos, key = { it.id }) { preset ->
+                            Row(
+                                modifier = Modifier
+                                    .recessedInstrumentWell(
+                                        shape = RoundedCornerShape(8.dp),
+                                        borderColor = HairlineMetal
+                                    )
+                                    .clickable { onApplyComboPreset(preset) }
+                                    .padding(start = 9.dp, end = 5.dp, top = 5.dp, bottom = 5.dp)
+                                    .testTag("combo_preset_${preset.id}"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = preset.name,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = SilverChrome,
+                                    maxLines = 1
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clip(CircleShape)
+                                        .clickable { onDeleteComboPreset(preset.id) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Close,
+                                        contentDescription = "Supprimer le combo",
+                                        tint = WarmEngraving,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Curated Era Kits (1842 Daguerreotype, 1855 Collodion, 1907 Autochrome, 1974 Riviera, 1998 XPan, 1982 Holga)
+                        items(HardwareCatalog.curatedEraCombos, key = { "era_${it.id}" }) { era ->
+                            val isActiveEra = uiState.selectedBody.id == era.bodyId && uiState.selectedFilm.id == era.filmId
+                            val accentCol = Color(era.accentHex)
+                            Row(
+                                modifier = Modifier
+                                    .brushedMetalPlate(
+                                        shape = RoundedCornerShape(8.dp),
+                                        borderColor = if (isActiveEra) accentCol else accentCol.copy(alpha = 0.42f),
+                                        borderWidth = if (isActiveEra) 1.3.dp else 0.8.dp,
+                                        elevated = isActiveEra
+                                    )
+                                    .clickable { onApplyCuratedEraCombo(era) }
+                                    .padding(horizontal = 8.dp, vertical = 5.dp)
+                                    .testTag("curated_era_${era.id}"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Text(
+                                    text = era.eraBadge,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                    color = accentCol,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = era.title,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = if (isActiveEra) FilmCream else SilverChrome,
+                                    fontWeight = if (isActiveEra) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+
+                    // ==================== 3. HARDWARE CATEGORY TABS ====================
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 2.dp)
+                            .recessedInstrumentWell(shape = RoundedCornerShape(10.dp))
+                            .padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
             BoutiqueTabPill(
                 label = if (activeBagRollCount > 0) "Boîtiers • $activeBagRollCount" else "Boîtiers (${HardwareCatalog.bodies.size})",
                 selected = activeTab == BoutiqueFocusTab.BODY,
@@ -1311,6 +1444,46 @@ fun BoutiqueScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+                }
+            }
+
+            if (isLandscape) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .displayCutoutPadding()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    previewSection(
+                        Modifier
+                            .weight(0.42f)
+                            .fillMaxHeight()
+                            .navigationBarsPadding(),
+                        true
+                    )
+                    catalogSection(
+                        Modifier
+                            .weight(0.58f)
+                            .fillMaxHeight()
+                    )
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    previewSection(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        false
+                    )
+                    catalogSection(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    )
                 }
             }
         }

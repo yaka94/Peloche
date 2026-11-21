@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import com.example.domain.model.FrameBorderStyle
+import com.example.domain.model.LensMount
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,7 +30,11 @@ class MechanicalAudioEngine(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sampleRate = 22050
 
-    private val shutterPcm: ShortArray by lazy { synthesizeShutterCurtain() }
+    private val shutterSlrPcm: ShortArray by lazy { synthesizeShutterCurtain() }
+    private val shutterRangefinderPcm: ShortArray by lazy { synthesizeRangefinderShutter() }
+    private val shutterInstantPcm: ShortArray by lazy { synthesizePolaroidEject() }
+    private val shutterToyPcm: ShortArray by lazy { synthesizeToyPlasticShutter() }
+    private val shutterLargeFormatPcm: ShortArray by lazy { synthesizeWoodenGuillotineShutter() }
     private val advancePcm: ShortArray by lazy { synthesizeAdvanceLever() }
     private val detentPcm: ShortArray by lazy { synthesizeDialDetent() }
     private val rewindPcm: ShortArray by lazy { synthesizeFilmRewind() }
@@ -43,9 +49,32 @@ class MechanicalAudioEngine(context: Context) {
         }
     }
 
-    fun playShutterClick(soundEnabled: Boolean, hapticsEnabled: Boolean) {
-        if (hapticsEnabled) vibrateSharp(28L, 220)
-        if (soundEnabled) playPcm(shutterPcm)
+    fun playShutterClick(
+        soundEnabled: Boolean,
+        hapticsEnabled: Boolean,
+        mount: LensMount = LensMount.SLR_35MM,
+        borderStyle: FrameBorderStyle = FrameBorderStyle.FILM_35MM_SPROCKETS
+    ) {
+        val isInstant = borderStyle == FrameBorderStyle.POLAROID_WHITE || borderStyle == FrameBorderStyle.INSTAX_MINI_WHITE
+        if (hapticsEnabled) {
+            when {
+                isInstant -> vibrateSharp(42L, 195)
+                mount == LensMount.LARGE_FORMAT_BRASS -> vibrateSharp(36L, 210)
+                mount == LensMount.RANGEFINDER_M || mount == LensMount.PANORAMIC_XPAN -> vibrateSharp(16L, 145)
+                mount == LensMount.TOY_LOFI -> vibrateSharp(18L, 165)
+                else -> vibrateSharp(28L, 225)
+            }
+        }
+        if (soundEnabled) {
+            val pcm = when {
+                isInstant -> shutterInstantPcm
+                mount == LensMount.LARGE_FORMAT_BRASS -> shutterLargeFormatPcm
+                mount == LensMount.RANGEFINDER_M || mount == LensMount.PANORAMIC_XPAN -> shutterRangefinderPcm
+                mount == LensMount.TOY_LOFI -> shutterToyPcm
+                else -> shutterSlrPcm
+            }
+            playPcm(pcm)
+        }
     }
 
     fun playAdvanceLever(soundEnabled: Boolean, hapticsEnabled: Boolean) {
@@ -201,6 +230,85 @@ class MechanicalAudioEngine(context: Context) {
             val snap = if (snapT > 0) (rng.nextDouble() * 2.0 - 1.0) * exp(-snapT * 140.0) * 0.65 else 0.0
             val s = ((whirr * env + snap) * 0.65).coerceIn(-1.0, 1.0)
             out[i] = (s * Short.MAX_VALUE).toInt().toShort()
+        }
+        return out
+    }
+
+    /** Whisper-quiet Leica M cloth focal-plane shutter click (~65ms). */
+    private fun synthesizeRangefinderShutter(): ShortArray {
+        val len = (sampleRate * 0.068).toInt()
+        val out = ShortArray(len)
+        val rng = Random(108)
+        for (i in 0 until len) {
+            val t = i.toDouble() / sampleRate
+            val c1 = (rng.nextDouble() * 2.0 - 1.0) * exp(-t * 210.0) * 0.42 +
+                sin(2.0 * PI * 980.0 * t) * exp(-t * 170.0) * 0.28
+            val t2 = t - 0.028
+            val c2 = if (t2 > 0) (rng.nextDouble() * 2.0 - 1.0) * exp(-t2 * 240.0) * 0.34 else 0.0
+            out[i] = (((c1 + c2) * 0.62).coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort()
+        }
+        return out
+    }
+
+    /** Crisp hollow plastic leaf-shutter snap for Holga / Disposable toy cams (~55ms). */
+    private fun synthesizeToyPlasticShutter(): ShortArray {
+        val len = (sampleRate * 0.058).toInt()
+        val out = ShortArray(len)
+        val rng = Random(204)
+        for (i in 0 until len) {
+            val t = i.toDouble() / sampleRate
+            val click = (sin(2.0 * PI * 1650.0 * t) * 0.50 +
+                sin(2.0 * PI * 2740.0 * t) * 0.32 +
+                (rng.nextDouble() * 2.0 - 1.0) * 0.48) * exp(-t * 185.0)
+            out[i] = ((click * 0.68).coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort()
+        }
+        return out
+    }
+
+    /** Iconic Polaroid SX-70 / Instax shutter click followed by motorized film-ejection whirr (~520ms). */
+    private fun synthesizePolaroidEject(): ShortArray {
+        val len = (sampleRate * 0.52).toInt()
+        val out = ShortArray(len)
+        val rng = Random(311)
+        for (i in 0 until len) {
+            val t = i.toDouble() / sampleRate
+            val shutter = if (t < 0.05) {
+                ((rng.nextDouble() * 2.0 - 1.0) * 0.65 + sin(2.0 * PI * 680.0 * t) * 0.35) * exp(-t * 160.0)
+            } else 0.0
+            val mt = t - 0.055
+            val motor = if (mt > 0.0) {
+                val env = when {
+                    mt < 0.04 -> mt / 0.04
+                    mt > 0.40 -> (0.465 - mt) / 0.065
+                    else -> 1.0
+                }.coerceIn(0.0, 1.0)
+                val f = 215.0 + 35.0 * (mt / 0.46)
+                (sin(2.0 * PI * f * mt) * 0.25 +
+                    sin(2.0 * PI * f * 2.5 * mt) * 0.16 +
+                    (rng.nextDouble() * 2.0 - 1.0) * 0.18 * (0.6 + 0.4 * sin(2.0 * PI * 42.0 * mt))) * env
+            } else 0.0
+            out[i] = (((shutter + motor) * 0.70).coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort()
+        }
+        return out
+    }
+
+    /** Deep resonant 19th-century mahogany guillotine / brass shutter thud (~185ms). */
+    private fun synthesizeWoodenGuillotineShutter(): ShortArray {
+        val len = (sampleRate * 0.185).toInt()
+        val out = ShortArray(len)
+        val rng = Random(1855)
+        for (i in 0 until len) {
+            val t = i.toDouble() / sampleRate
+            // Brass latch release + hollow mahogany chamber thump
+            val latch = (sin(2.0 * PI * 760.0 * t) * 0.35 + (rng.nextDouble() * 2.0 - 1.0) * 0.32) * exp(-t * 145.0)
+            val wood1 = sin(2.0 * PI * 145.0 * t) * exp(-t * 48.0) * 0.65
+            val t2 = t - 0.088
+            val drop = if (t2 > 0.0) {
+                (sin(2.0 * PI * 112.0 * t2) * 0.72 +
+                    sin(2.0 * PI * 265.0 * t2) * 0.30 +
+                    (rng.nextDouble() * 2.0 - 1.0) * 0.40) * exp(-t2 * 56.0)
+            } else 0.0
+            out[i] = (((latch + wood1 + drop) * 0.68).coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort()
         }
         return out
     }

@@ -15,12 +15,235 @@ enum class AspectRatioSpec(
     val filmGaugeLabel: String
 ) {
     CLASSIC_3_2("3:2 • 35mm", 3f, 2f, "3:2", "135 • 35mm"),
+    COMPACT_4_3("4:3 • Compact 90s", 4f, 3f, "4:3", "135 • 4:3"),
     HALF_FRAME_3_4("3:4 • Demi-Format", 3f, 4f, "HALF", "135 • 18×24"),
     SQUARE_1_1("1:1 • Moyen Format 6×6", 1f, 1f, "6×6", "120 • 6×6"),
     PANORAMIC_XPAN("65:24 • Panoramique", 65f, 24f, "XPAN", "135 • 24×65"),
-    DISPOSABLE_3_2("3:2 • Jetable", 3f, 2f, "TOY", "135 • JETABLE");
+    DISPOSABLE_3_2("3:2 • Jetable", 3f, 2f, "TOY", "135 • JETABLE"),
+    POLAROID_SQUARE("1:1 • Polaroid", 1f, 1f, "POLA", "SX-70 • INSTANT"),
+    INSTAX_MINI("3:4 • Instax Mini", 3f, 4f, "INSTAX", "MINI • INSTANT"),
+    LARGE_FORMAT_4_5("4:5 • Chambre 4×5", 4f, 5f, "4×5", "PLAQUE • XIXe");
 
     val aspectRatio: Float get() = ratioWidth / ratioHeight
+}
+
+/**
+ * Signature physical film / instant paper / 19th-century plate border contour tied to each Camera Body.
+ */
+enum class FrameBorderStyle(
+    val labelFr: String,
+    val shortBadge: String
+) {
+    FILM_35MM_SPROCKETS("Pellicule 35mm perforée", "35mm"),
+    HALF_FRAME_STRIP("Bande Demi-Format 18×24", "HALF"),
+    MEDIUM_FORMAT_6X6("Cadre 6×6 encoches 120", "120 6×6"),
+    PANORAMIC_XPAN("Bande Ciné Panoramique", "XPAN"),
+    COMPACT_LAB_PRINT("Tirage Labo 90s Crème", "TIRAGE"),
+    HOLGA_MASK_6X6("Masque plastique Holga", "HOLGA"),
+    DISPOSABLE_CARD("Fenêtre Jetable 27", "JETABLE"),
+    POLAROID_WHITE("Cadre Polaroid Blanc", "POLA"),
+    INSTAX_MINI_WHITE("Cadre Instax Mini", "INSTAX"),
+    WET_PLATE_COLLODION("Plaque Collodion / Tôle", "PLAQUE"),
+    DAGUERREOTYPE_CASE("Écrin Daguerréotype Laiton", "ÉCRIN"),
+    AUTOCHROME_GLASS("Plaque Verre Autochrome", "VERRE"),
+    PINHOLE_WOOD_BOX("Chambre Sténopé Bois", "STÉNOPÉ")
+}
+
+/**
+ * Procedural analog cinema & vintage video filters available when shooting in CINÉ mode.
+ * Each filter runs live in GLSL and is baked directly into recorded MP4 clips.
+ */
+enum class VideoFilterStyle(
+    val shaderModeId: Int,
+    val labelFr: String,
+    val shortBadge: String,
+    val targetFps: Int,
+    val fpsLabel: String,
+    val accentHex: Long,
+    val descriptionFr: String
+) {
+    SUPER_8_KODACHROME(
+        shaderModeId = 1,
+        labelFr = "Super 8 Kodachrome",
+        shortBadge = "SUPER 8",
+        targetFps = 18,
+        fpsLabel = "18 i/s",
+        accentHex = 0xFFE8A438,
+        descriptionFr = "Grain chaud années 70, flottement de fenêtre (gate weave) et poussières"
+    ),
+    SILENT_1920(
+        shaderModeId = 2,
+        labelFr = "Muet Pathé 1920",
+        shortBadge = "MUET 1920",
+        targetFps = 14,
+        fpsLabel = "14 i/s",
+        accentHex = 0xFFCFA76E,
+        descriptionFr = "Cinéma muet sépia orthochromatique, scintillement lampe à arc, rayures et iris"
+    ),
+    VHS_1989(
+        shaderModeId = 3,
+        labelFr = "VHS Caméscope 89",
+        shortBadge = "VHS 89",
+        targetFps = 25,
+        fpsLabel = "25 i/s",
+        accentHex = 0xFF4ECDC4,
+        descriptionFr = "Lignes CRT, bavure chroma Y/C, tremblement de tracking bas d'écran et dropouts"
+    ),
+    HANDYCAM_HI8_1996(
+        shaderModeId = 7,
+        labelFr = "Hi8 Handycam 96",
+        shortBadge = "HI8 96",
+        targetFps = 25,
+        fpsLabel = "25 i/s",
+        accentHex = 0xFFFF9F43,
+        descriptionFr = "Caméscope familial années 90 : teintes ambre pastel, entrelacement doux et halo vidéo"
+    ),
+    TECHNICOLOR_1955(
+        shaderModeId = 6,
+        labelFr = "Technicolor 1955",
+        shortBadge = "TECHNI 55",
+        targetFps = 24,
+        fpsLabel = "24 i/s",
+        accentHex = 0xFFE63946,
+        descriptionFr = "Procédé 3-bandes Hollywood : rouges carmin, cyans émeraude et peaux dorées veloutées"
+    ),
+    CINE_16MM_BW(
+        shaderModeId = 4,
+        labelFr = "16mm Nouvelle Vague",
+        shortBadge = "16MM N&B",
+        targetFps = 24,
+        fpsLabel = "24 i/s",
+        accentHex = 0xFFD9D5CC,
+        descriptionFr = "Noir & blanc argentique 16mm nerveux, contraste documentaire et grain fin"
+    ),
+    NIGHT_35MM_NEON(
+        shaderModeId = 5,
+        labelFr = "35mm Néon Ciné",
+        shortBadge = "35MM NÉON",
+        targetFps = 24,
+        fpsLabel = "24 i/s",
+        accentHex = 0xFF38BDF8,
+        descriptionFr = "Pellicule cinéma nocturne ECN-2, halos carmin profonds et reflets anamorphiques bleutés"
+    ),
+    LOMOKINO_35MM(
+        shaderModeId = 8,
+        labelFr = "LomoKino Manivelle",
+        shortBadge = "LOMOKINO",
+        targetFps = 8,
+        fpsLabel = "8 i/s",
+        accentHex = 0xFFF97316,
+        descriptionFr = "Ciné 35mm à manivelle saccadé 8 i/s, bande panoramique, contraste Lomo et fuite bord"
+    ),
+    OPTICAL_CHAIN(
+        shaderModeId = 0,
+        labelFr = "Chaîne Optique Active",
+        shortBadge = "OPTIQUE",
+        targetFps = 24,
+        fpsLabel = "24 i/s",
+        accentHex = 0xFFD4A253,
+        descriptionFr = "Filme directement à travers votre boîtier, objectif et pellicule montés (dont Collodion)"
+    );
+}
+
+/**
+ * Curated factory hardware + film combos grouped by photography era for 1-tap discovery.
+ */
+data class CuratedEraCombo(
+    val id: String,
+    val eraBadge: String,
+    val title: String,
+    val subtitle: String,
+    val bodyId: String,
+    val lensId: String,
+    val filmId: String,
+    val accentHex: Long
+)
+
+/**
+ * Hardware LED flash mode for night / direct-flash analog aesthetics.
+ */
+enum class CameraFlashMode(val labelFr: String, val shortBadge: String) {
+    OFF("Flash désactivé", "OFF"),
+    AUTO("Flash automatique", "AUTO"),
+    ON("Flash forcé", "ON");
+
+    fun next(): CameraFlashMode = entries[(ordinal + 1) % entries.size]
+}
+
+/**
+ * Controls physical light-seal leak intensity across camera bodies.
+ * AUTO respects each camera body's authentic foam-seal age; SUBTLE/STRONG allow forcing
+ * visible procedural light leaks on any body (including clean Pro SLR / Rangefinder bodies).
+ */
+enum class LightLeakMode(
+    val labelFr: String,
+    val shortLabel: String,
+    val descriptionFr: String
+) {
+    AUTO(
+        labelFr = "Auto boîtier",
+        shortLabel = "AUTO",
+        descriptionFr = "Respecte les joints d'origine : fort sur Holga/Jetable, subtil années 70, propre sur Pro"
+    ),
+    SUBTLE(
+        labelFr = "Forcer Subtil",
+        shortLabel = "SUBTIL",
+        descriptionFr = "Ajoute un liseré lumineux chaud sur tous les boîtiers (même Pro SLR / M6)"
+    ),
+    STRONG(
+        labelFr = "Forcer Fort",
+        shortLabel = "FORT",
+        descriptionFr = "Brûlures ambre et vermillon franches garanties sur chaque prise de vue"
+    ),
+    OFF(
+        labelFr = "Désactivées",
+        shortLabel = "OFF",
+        descriptionFr = "Joints neufs étanches : supprime toute fuite de lumière sur tous les appareils"
+    );
+
+    fun resolveIntensity(bodyBaseIntensity: Float): Float = when (this) {
+        AUTO -> bodyBaseIntensity
+        SUBTLE -> max(bodyBaseIntensity, 0.44f)
+        STRONG -> max(bodyBaseIntensity, 0.90f)
+        OFF -> 0f
+    }
+
+    companion object {
+        fun fromNameOrDefault(raw: String?): LightLeakMode =
+            entries.firstOrNull { it.name == raw } ?: AUTO
+    }
+}
+
+/**
+ * User-saved hardware + film + date preset ("Mes Combos") persisted locally in DataStore.
+ */
+data class SavedComboPreset(
+    val id: String,
+    val name: String,
+    val bodyId: String,
+    val lensId: String,
+    val filmId: String,
+    val dateStampStyleName: String
+) {
+    fun serialize(): String {
+        val safeName = name.replace("|", " ").trim().ifEmpty { "Combo" }
+        return listOf(id, safeName, bodyId, lensId, filmId, dateStampStyleName).joinToString("|")
+    }
+
+    companion object {
+        fun deserialize(raw: String): SavedComboPreset? {
+            val parts = raw.split("|")
+            if (parts.size < 6) return null
+            return SavedComboPreset(
+                id = parts[0],
+                name = parts[1],
+                bodyId = parts[2],
+                lensId = parts[3],
+                filmId = parts[4],
+                dateStampStyleName = parts[5]
+            )
+        }
+    }
 }
 
 /**
@@ -42,11 +265,12 @@ enum class LensMount(val labelFr: String, val shortCode: String) {
     MEDIUM_FORMAT_6X6("Moyen Format 6×6", "MF 6×6"),
     PANORAMIC_XPAN("Monture Panoramique X", "XPAN"),
     COMPACT_SERIES("Optiques Compactes", "COMPACT"),
-    TOY_LOFI("Optiques Toy / Plastique", "TOY")
+    TOY_LOFI("Optiques Toy / Plastique", "TOY"),
+    LARGE_FORMAT_BRASS("Chambre Laiton XIXe", "LAITON")
 }
 
 /**
- * Stage 1: Lens (Objectif) - 15 hardware models.
+ * Stage 1: Lens (Objectif) - 18 hardware models (including 19th-century brass Petzval, Chevalier & Pinhole).
  */
 data class LensModel(
     val id: String,
@@ -65,6 +289,8 @@ data class LensModel(
     val halationStrength: Float,
     val flareStrength: Float,
     val tiltShiftAmount: Float,
+    val plasticScratchIntensity: Float = 0f,
+    val swirlyBokehAmount: Float = 0f,
     val coatingTintHex: Long,
     val barrelColorHex: Long,
     val ringAccentHex: Long,
@@ -76,7 +302,7 @@ data class LensModel(
 }
 
 /**
- * Stage 2: Camera Body (Boîtier) - 12 hardware models.
+ * Stage 2: Camera Body (Boîtier) - 18 hardware models (1842 to 2013).
  */
 data class CameraBodyModel(
     val id: String,
@@ -86,6 +312,7 @@ data class CameraBodyModel(
     val mount: LensMount,
     val defaultLensId: String,
     val aspectRatioSpec: AspectRatioSpec,
+    val frameBorderStyle: FrameBorderStyle = FrameBorderStyle.FILM_35MM_SPROCKETS,
     val maxExposures: Int,
     val supportsDiptych: Boolean = false,
     val contrast: Float,
@@ -99,6 +326,10 @@ data class CameraBodyModel(
     val highlightB: Float = 0f,
     val lightLeakIntensity: Float = 0f,
     val globalSoftness: Float = 0f,
+    val plasticScratchIntensity: Float = 0f,
+    val collodionPlateAmount: Float = 0f,
+    val daguerreTarnishAmount: Float = 0f,
+    val autochromeMosaicAmount: Float = 0f,
     val topPlateHex: Long,
     val leatherHex: Long,
     val accentHex: Long,
@@ -106,15 +337,28 @@ data class CameraBodyModel(
     val description: String
 ) {
     /**
-     * Toy & disposable cameras (Holga, Jetable) use a fixed plastic hyperfocal lens with NO autofocus.
+     * Toy, disposable & pinhole cameras use a fixed hyperfocal aperture with NO autofocus.
      */
     val isFixedFocusToyCam: Boolean get() = mount == LensMount.TOY_LOFI
+
+    /**
+     * 19th-century wooden bellows / brass view cameras (Collodion, Daguerreotype, Autochrome).
+     */
+    val isHistoricalLargeFormat: Boolean get() = mount == LensMount.LARGE_FORMAT_BRASS
+
+    /**
+     * Instant chemical peel/integral cameras (Polaroid SX-70, Instax Mini) with milky reveal animation.
+     */
+    val isInstantCamera: Boolean
+        get() = frameBorderStyle == FrameBorderStyle.POLAROID_WHITE ||
+            frameBorderStyle == FrameBorderStyle.INSTAX_MINI_WHITE
 
     val focusModeLabel: String
         get() = when (mount) {
             LensMount.TOY_LOFI -> "FIXE ∞"
             LensMount.RANGEFINDER_M, LensMount.PANORAMIC_XPAN -> "TÉLÉMÈTRE"
             LensMount.MEDIUM_FORMAT_6X6 -> "DÉPOLI MF"
+            LensMount.LARGE_FORMAT_BRASS -> "DÉPOLI 4×5"
             LensMount.SLR_35MM -> "STIGMO SLR"
             LensMount.COMPACT_SERIES -> "AF 90s"
         }
@@ -223,6 +467,7 @@ enum class DateStampStyle(
 
 enum class FilmMood(val labelFr: String) {
     ALL("Toutes"),
+    HISTORICAL("XIXe • Plaques"),
     COLOR("Couleur"),
     PASTEL("Pastel"),
     GOLDEN("Dorée"),
@@ -306,6 +551,12 @@ data class FilmStockModel(
     val sepiaAmount: Float = 0.0f,
     val cyanotypeAmount: Float = 0.0f,
     val infraredAmount: Float = 0.0f,
+    val orthoUvAmount: Float = 0.0f,
+    val collodionPlateAmount: Float = 0.0f,
+    val daguerreTarnishAmount: Float = 0.0f,
+    val autochromeMosaicAmount: Float = 0.0f,
+    val paperFiberAmount: Float = 0.0f,
+    val brushBorderAmount: Float = 0.0f,
     val tagline: String
 )
 
@@ -496,7 +747,10 @@ enum class DevelopmentMethod(
     val bleachBypassStrength: Float,
     val acutanceBoost: Float,
     val sepiaBathStrength: Float,
-    val cyanotypeBathStrength: Float
+    val cyanotypeBathStrength: Float,
+    val collodionBathStrength: Float = 0f,
+    val daguerreBathStrength: Float = 0f,
+    val platinumBathStrength: Float = 0f
 ) {
     STANDARD_C41(
         titleFr = "Développement Standard",
@@ -650,9 +904,63 @@ enum class DevelopmentMethod(
         acutanceBoost = 0.70f,
         sepiaBathStrength = 0.0f,
         cyanotypeBathStrength = 0.0f
+    ),
+    SILVER_NITRATE_COLLODION(
+        titleFr = "Bain Nitrate d'Argent (Collodion)",
+        shortBadge = "COLLODION",
+        tempAndTime = "18,0 °C • 15 s cuvette",
+        descriptionFr = "Révélation XIXe sur plaque humide : réponse orthochromatique UV, coulures d'émulsion et micro-bulles argentiques.",
+        isoFactor = 0.5f,
+        recommendedFor = setOf(EmulsionType.BLACK_AND_WHITE, EmulsionType.COLOR_NEGATIVE),
+        exposureDelta = 0.04f,
+        contrastMul = 1.24f,
+        saturationMul = 0.12f,
+        grainMul = 1.22f,
+        crossProcessStrength = 0.0f,
+        bleachBypassStrength = 0.25f,
+        acutanceBoost = 0.45f,
+        sepiaBathStrength = 0.18f,
+        cyanotypeBathStrength = 0.0f,
+        collodionBathStrength = 0.88f
+    ),
+    MERCURY_DAGUERRE(
+        titleFr = "Vapeur de Mercure 1839",
+        shortBadge = "MERCURE",
+        tempAndTime = "60,0 °C • Boîte à vapeur",
+        descriptionFr = "Procédé Daguerréotype sur cuivre argenté : piqué ciselé miroir et couronne d'oxydation irisée bleu-bronze.",
+        isoFactor = 0.5f,
+        recommendedFor = setOf(EmulsionType.BLACK_AND_WHITE, EmulsionType.COLOR_SLIDE),
+        exposureDelta = 0.06f,
+        contrastMul = 1.32f,
+        saturationMul = 0.15f,
+        grainMul = 0.55f,
+        crossProcessStrength = 0.0f,
+        bleachBypassStrength = 0.40f,
+        acutanceBoost = 0.60f,
+        sepiaBathStrength = 0.12f,
+        cyanotypeBathStrength = 0.0f,
+        daguerreBathStrength = 0.92f
+    ),
+    GOLD_PLATINUM_TONING(
+        titleFr = "Virage Or-Platine 1880",
+        shortBadge = "PLATINE",
+        tempAndTime = "21,0 °C • Sels nobles",
+        descriptionFr = "Tirage de musée sur papier coton : dégradés infinis champagne-graphite, noirs veloutés sans grain agressif.",
+        isoFactor = 1.0f,
+        recommendedFor = setOf(EmulsionType.BLACK_AND_WHITE, EmulsionType.COLOR_NEGATIVE, EmulsionType.COLOR_SLIDE),
+        exposureDelta = 0.02f,
+        contrastMul = 0.96f,
+        saturationMul = 0.20f,
+        grainMul = 0.72f,
+        crossProcessStrength = 0.0f,
+        bleachBypassStrength = 0.0f,
+        acutanceBoost = 0.18f,
+        sepiaBathStrength = 0.28f,
+        cyanotypeBathStrength = 0.0f,
+        platinumBathStrength = 0.90f
     );
 
-    fun effectiveIso(baseIso: Int): Int = (baseIso * isoFactor).roundToInt().coerceIn(25, 12800)
+    fun effectiveIso(baseIso: Int): Int = (baseIso * isoFactor).roundToInt().coerceIn(1, 12800)
 
     fun compatibilityLabelFr(emulsionType: EmulsionType): String =
         if (emulsionType in recommendedFor) "Idéal pour ${emulsionType.processCode}"
@@ -672,8 +980,16 @@ data class OpticalChainParams(
     val evCompensation: Float = 0f,
     val zoomMultiplier: Float = 1.0f,
     val lightLeakSeed: Float = 0.37f,
-    val isFrontCamera: Boolean = false
+    val isFrontCamera: Boolean = false,
+    val lightLeakMode: LightLeakMode = LightLeakMode.AUTO,
+    val tiltShiftPosition: Float = 0.5f,
+    val tiltShiftVertical: Boolean = false,
+    val invertedGroundGlass: Boolean = false,
+    val videoFilterMode: Int = 0
 ) {
     val expirationEffect: ExpirationOpticalEffect
         get() = expirationDate.computeChemicalEffect(film.emulsionType)
+
+    val effectiveLightLeakIntensity: Float
+        get() = lightLeakMode.resolveIntensity(body.lightLeakIntensity)
 }

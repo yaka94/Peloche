@@ -21,14 +21,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Thermostat
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -74,6 +85,7 @@ fun DevelopedRollArchiveCard(
     previewPaths: List<String>,
     dateFmt: SimpleDateFormat,
     onOpenContactSheet: () -> Unit,
+    onRequestRename: () -> Unit,
     onRequestDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -94,6 +106,9 @@ fun DevelopedRollArchiveCard(
         DevelopmentMethod.SEPIA_TONING -> Color(0xFFD9A066)
         DevelopmentMethod.CYANOTYPE_TONING -> Color(0xFF5DA9E9)
         DevelopmentMethod.RODINAL_STAND -> BrassAccent
+        DevelopmentMethod.SILVER_NITRATE_COLLODION -> Color(0xFFC8BEAE)
+        DevelopmentMethod.MERCURY_DAGUERRE -> Color(0xFF9AC5C8)
+        DevelopmentMethod.GOLD_PLATINUM_TONING -> Color(0xFFE4CFA0)
     }
 
     Column(
@@ -151,6 +166,19 @@ fun DevelopedRollArchiveCard(
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 IconButton(
+                    onClick = onRequestRename,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("rename_roll_button_${roll.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = "Renommer ce rouleau",
+                        tint = BrassAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
                     onClick = onRequestDelete,
                     modifier = Modifier
                         .size(48.dp)
@@ -192,14 +220,18 @@ fun DevelopedRollArchiveCard(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = film.name,
+                    text = if (roll.customTitle.isNotBlank()) roll.customTitle else film.name,
                     style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp),
                     color = FilmCream,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${body.name}  •  ${lens.shortCode}",
+                    text = if (roll.customTitle.isNotBlank()) {
+                        "${film.name}  •  ${body.name}  •  ${lens.shortCode}"
+                    } else {
+                        "${body.name}  •  ${lens.shortCode}"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = SilverChrome,
                     maxLines = 1,
@@ -566,4 +598,105 @@ fun LabStampTag(
             maxLines = 1
         )
     }
+}
+
+/**
+ * Dark skeuomorphic archival roll naming dialog (e.g. "Week-end Lisbonne", "Soirée 35mm").
+ */
+@Composable
+fun RenameRollDialog(
+    roll: FilmRollEntity,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var text by remember(roll.id, roll.customTitle) { mutableStateOf(roll.customTitle) }
+    val suggestions = remember { listOf("Week-end mer", "Soirée 35mm", "Portraits", "Voyage") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF17181E),
+        titleContentColor = FilmCream,
+        textContentColor = SilverChrome,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "Nommer le rouleau N°%03d".format(roll.rollNumber),
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Text(
+                    text = "Gravé sur la pochette Labo et la planche-contact.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WarmEngraving
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it.take(48) },
+                    singleLine = true,
+                    placeholder = {
+                        Text(
+                            text = "Ex. Week-end Lisbonne…",
+                            color = WarmEngraving.copy(alpha = 0.7f)
+                        )
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = BrassAccent,
+                        unfocusedBorderColor = HairlineMetal,
+                        focusedTextColor = FilmCream,
+                        unfocusedTextColor = FilmCream,
+                        cursorColor = BrassAccent
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("rename_roll_text_field")
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    suggestions.forEach { preset ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(AnodizedSlate)
+                                .border(0.8.dp, HairlineMetal, RoundedCornerShape(14.dp))
+                                .clickable { text = preset }
+                                .padding(horizontal = 8.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = preset,
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                color = SilverChrome,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirm(text.trim())
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = BrassAccent,
+                    contentColor = MatteLeather
+                ),
+                modifier = Modifier.testTag("confirm_rename_roll_button")
+            ) {
+                Text("Enregistrer", style = MaterialTheme.typography.labelLarge)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Annuler", color = SilverChrome)
+            }
+        }
+    )
 }

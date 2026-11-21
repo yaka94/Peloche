@@ -19,11 +19,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Flare
+import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material.icons.filled.VolumeUp
@@ -50,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.CameraSettings
 import com.example.domain.model.DateStampStyle
+import com.example.domain.model.LightLeakMode
 import com.example.ui.components.brushedMetalPlate
 import com.example.ui.components.recessedInstrumentWell
 import com.example.ui.theme.AnodizedSlate
@@ -69,12 +76,18 @@ fun SettingsBottomSheet(
     useSampleSceneInViewfinder: Boolean,
     onDismiss: () -> Unit,
     onSelectDateStampStyle: (DateStampStyle) -> Unit,
+    onToggleFrameBorder: (Boolean) -> Unit,
     onToggleGrid: (Boolean) -> Unit,
     onToggleDiptych: (Boolean) -> Unit,
     onToggleSound: (Boolean) -> Unit,
     onToggleHaptics: (Boolean) -> Unit,
     onToggleLosslessPng: (Boolean) -> Unit,
-    onToggleSampleSceneMode: (Boolean) -> Unit
+    onToggleSampleSceneMode: (Boolean) -> Unit,
+    onToggleInstantPreview: (Boolean) -> Unit,
+    onToggleAnimatedEffects: (Boolean) -> Unit,
+    onSelectLightLeakMode: (LightLeakMode) -> Unit,
+    onImportGalleryPhoto: () -> Unit,
+    onOpenOpticalDiagnostic: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val currentDateStyle = settings.effectiveDateStampStyle
@@ -185,6 +198,128 @@ fun SettingsBottomSheet(
             }
 
             SettingToggleRow(
+                icon = Icons.Filled.AutoAwesome,
+                title = "Aperçu Tirage Immédiat (Labo Express)",
+                subtitle = "Révèle chaque photo sur papier galerie dès le déclenchement avec Avant/Après & export Story",
+                checked = settings.instantPreviewEnabled,
+                testTag = "setting_instant_preview",
+                onCheckedChange = onToggleInstantPreview
+            )
+
+            SettingToggleRow(
+                icon = Icons.Filled.Grain,
+                title = "Effets procéduraux vivants (Viseur Ciné)",
+                subtitle = "Anime en continu fuites de lumière, flares, halation, poussières & grain argentique 18 i/s",
+                checked = settings.animatedEffectsEnabled,
+                testTag = "setting_animated_effects",
+                onCheckedChange = onToggleAnimatedEffects
+            )
+
+            // Light Leak Intensity Selector (Auto boîtier / Subtil / Fort / Off)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .brushedMetalPlate(shape = RoundedCornerShape(13.dp))
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Flare,
+                        contentDescription = "Fuites de lumière",
+                        tint = if (settings.lightLeakMode != LightLeakMode.OFF) BrassAccent else WarmEngraving
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Fuites de lumière (Light Leaks)",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = FilmCream
+                        )
+                        Text(
+                            text = settings.lightLeakMode.descriptionFr,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = WarmEngraving
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("light_leak_mode_selector"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    LightLeakMode.entries.forEach { mode ->
+                        val selected = mode == settings.lightLeakMode
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .recessedInstrumentWell(
+                                    shape = RoundedCornerShape(10.dp),
+                                    borderColor = if (selected) BrassAccent else HairlineMetal
+                                )
+                                .clickable { onSelectLightLeakMode(mode) }
+                                .padding(vertical = 10.dp)
+                                .testTag("light_leak_mode_${mode.name}"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = mode.shortLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selected) BrassAccent else SilverChrome,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Zero-permission Gallery Photo Import action row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .brushedMetalPlate(
+                        shape = RoundedCornerShape(12.dp),
+                        borderColor = BrassAccent.copy(alpha = 0.65f),
+                        elevated = true
+                    )
+                    .clickable { onImportGalleryPhoto() }
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                    .testTag("setting_import_gallery"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AddPhotoAlternate,
+                    contentDescription = "Importer une photo de la galerie",
+                    tint = BrassAccent
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Développer une photo de la galerie",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = FilmCream
+                    )
+                    Text(
+                        text = "Applique votre boîtier, objectif, pellicule & dateur sur n'importe quelle photo (sans permission)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WarmEngraving
+                    )
+                }
+            }
+
+            SettingToggleRow(
+                icon = Icons.Filled.CropFree,
+                title = "Cadre par boîtier (Pellicule / Pola)",
+                subtitle = "Affiche et grave le contour propre à l'appareil : 35mm perforé, Polaroid, Instax, 6×6, XPan",
+                checked = settings.frameBorderEnabled,
+                testTag = "setting_frame_border",
+                onCheckedChange = onToggleFrameBorder
+            )
+
+            SettingToggleRow(
                 icon = Icons.Filled.GridOn,
                 title = "Grille des tiers au viseur",
                 subtitle = "Repères optiques discrets gravés dans le dépoli",
@@ -242,6 +377,39 @@ fun SettingsBottomSheet(
                 testTag = "setting_sample_scene",
                 onCheckedChange = onToggleSampleSceneMode
             )
+
+            // Interactive Optical Diagnostic Bench row (Solid 18% Gray + Color Chart shader sweep)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .brushedMetalPlate(
+                        shape = RoundedCornerShape(12.dp),
+                        borderColor = BrassAccent.copy(alpha = 0.55f)
+                    )
+                    .clickable { onOpenOpticalDiagnostic() }
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                    .testTag("setting_optical_diagnostic"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Science,
+                    contentDescription = "Banc de diagnostic optique",
+                    tint = BrassAccent
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Banc de diagnostic optique (Mires)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = FilmCream
+                    )
+                    Text(
+                        text = "Inspecte Light Leaks, Rayures & Tilt-Shift de 0 % à 100 % sur gris neutre 18 % et mire couleur",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WarmEngraving
+                    )
+                }
+            }
 
             // Discreet local-storage transparency notice
             Row(

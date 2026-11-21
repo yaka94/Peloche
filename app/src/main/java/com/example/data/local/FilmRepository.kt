@@ -21,7 +21,14 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlin.random.Random
+
+data class InstantPrintResult(
+    val developedPath: String,
+    val originalPath: String
+)
 
 /**
  * 100% Local Repository enforcing the true analog workflow:
@@ -226,7 +233,8 @@ class FilmRepository(
         evCompensation: Float,
         zoomMultiplier: Float,
         dateStampStyle: DateStampStyle,
-        isFrontCamera: Boolean
+        isFrontCamera: Boolean,
+        lightLeakSeed: Float = Random.nextFloat()
     ): Pair<FilmRollEntity, FilmFrameEntity> = withContext(Dispatchers.IO) {
         val nextFrameNum = roll.shotsTaken + 1
         val latentDir = File(context.filesDir, "latent/roll_${roll.id}").apply { mkdirs() }
@@ -247,7 +255,7 @@ class FilmRepository(
             expirationSerialized = roll.expirationSerialized,
             evCompensation = evCompensation,
             zoomMultiplier = zoomMultiplier,
-            lightLeakSeed = Random.nextFloat(),
+            lightLeakSeed = lightLeakSeed,
             dateStampText = dateStampStyle.encodeStamp(Date()),
             isFrontCamera = isFrontCamera,
             isDiptychPaired = roll.isDiptychMode
@@ -268,6 +276,8 @@ class FilmRepository(
         roll: FilmRollEntity,
         method: DevelopmentMethod,
         losslessPng: Boolean,
+        includeFrameBorder: Boolean = true,
+        lightLeakMode: com.example.domain.model.LightLeakMode = com.example.domain.model.LightLeakMode.AUTO,
         onProgress: (Float, String) -> Unit
     ): FilmRollEntity = withContext(Dispatchers.IO) {
         val frames = filmDao.getFramesForRollOnce(roll.id)
@@ -305,14 +315,23 @@ class FilmRepository(
                         evCompensation = frame.evCompensation,
                         zoomMultiplier = frame.zoomMultiplier,
                         lightLeakSeed = frame.lightLeakSeed,
-                        isFrontCamera = frame.isFrontCamera
+                        isFrontCamera = frame.isFrontCamera,
+                        lightLeakMode = lightLeakMode
                     )
                     val developed = OffscreenGlProcessor.processFrame(
                         source = src,
                         params = params,
                         dateStampText = frame.dateStampText,
                         overlayBitmap = overlayBmp,
-                        timeSeed = (frame.frameNumber * 13.7f) + frame.lightLeakSeed * 50f
+                        timeSeed = (frame.frameNumber * 13.7f) + frame.lightLeakSeed * 50f,
+                        includeFrameBorder = includeFrameBorder && !(roll.isDiptychMode && body.supportsDiptych),
+                        frameNumber = frame.frameNumber
+                    )
+                    // Save lightweight original reference for Avant/Après comparison in the Labo Loupe
+                    saveOriginalComparisonCopy(
+                        source = src,
+                        targetDir = File(context.filesDir, "developed/roll_${roll.id}"),
+                        fileName = "orig_F%02d.jpg".format(frame.frameNumber)
                     )
                     src.recycle()
                     renderedBitmaps.add(frame to developed)
@@ -391,5 +410,109 @@ class FilmRepository(
         File(context.filesDir, "latent/roll_$rollId").deleteRecursively()
         File(context.filesDir, "developed/roll_$rollId").deleteRecursively()
         filmDao.deleteRollById(rollId)
+    }
+
+    suspend fun renameRoll(rollId: Long, newTitle: String) = withContext(Dispatchers.IO) {
+        filmDao.updateRollTitle(rollId, newTitle.trim().take(48))
+    }
+
+    suspend fun updateFrameCaption(frameId: Long, caption: String) = withContext(Dispatchers.IO) {
+        filmDao.updateFrameCaption(frameId, caption.trim().take(72))
+    }
+
+    /**
+     * Develops a single frame immediately (used for "Mode Aperçu Immédiat" after shutter release
+     * and for zero-permission Gallery Photo Import), saving both the developed print and the
+     * untouched original for Press & Hold Avant/Après comparison.
+     */
+    suspend fun renderInstantPreview(
+        sourceBitmap: Bitmap,
+        body: CameraBodyModel,
+        lens: LensModel,
+        film: FilmStockModel,
+        expirationDate: FilmExpirationDate,
+        evCompensation: Float,
+        zoomMultiplier: Float,
+        dateStampStyle: DateStampStyle,
+        includeFrameBorder: Boolean,
+        frameNumber: Int,
+        isFrontCamera: Boolean,
+        lightLeakSeed: Float = Random.nextFloat(),
+        lightLeakMode: com.example.domain.model.LightLeakMode = com.example.domain.model.LightLeakMode.AUTO,
+        tiltShiftPosition: Float = 0.5f,
+        tiltShiftVertical: Boolean = false
+    ): InstantPrintResult = withContext(Dispatchers.IO) {
+        val outDir = File(context.cacheDir, "instant_preview").apply { mkdirs() }
+        val stamp = System.currentTimeMillis()
+        val origFile = saveOriginalComparisonCopy(
+            source = sourceBitmap,
+            targetDir = outDir,
+            fileName = "orig_$stamp.jpg"
+        )
+        val overlayBmp = BitmapFactory.decodeResource(context.resources, com.example.R.drawable.img_optical_flare_overlay)
+        val params = OpticalChainParams(
+            lens = lens,
+            body = body,
+            film = film,
+            expirationDate = expirationDate,
+            development = DevelopmentMethod.STANDARD_C41,
+            evCompensation = evCompensation,
+            zoomMultiplier = zoomMultiplier,
+            lightLeakSeed = lightLeakSeed,
+            isFrontCamera = isFrontCamera,
+            lightLeakMode = lightLeakMode,
+            tiltShiftPosition = tiltShiftPosition,
+            tiltShiftVertical = tiltShiftVertical
+        )
+        val developed = OffscreenGlProcessor.processFrame(
+            source = sourceBitmap,
+            params = params,
+            dateStampText = dateStampStyle.encodeStamp(Date()),
+            overlayBitmap = overlayBmp,
+            timeSeed = (frameNumber * 13.7f) + lightLeakSeed * 50f,
+            includeFrameBorder = includeFrameBorder,
+            frameNumber = frameNumber
+        )
+        overlayBmp?.recycle()
+
+        val devFile = File(outDir, "dev_$stamp.jpg")
+        FileOutputStream(devFile).use { fos ->
+            developed.compress(Bitmap.CompressFormat.JPEG, 95, fos)
+        }
+        developed.recycle()
+
+        InstantPrintResult(
+            developedPath = devFile.absolutePath,
+            originalPath = origFile.absolutePath
+        )
+    }
+
+    private fun saveOriginalComparisonCopy(
+        source: Bitmap,
+        targetDir: File,
+        fileName: String
+    ): File {
+        targetDir.mkdirs()
+        val outFile = File(targetDir, fileName)
+        val maxDim = max(source.width, source.height).coerceAtLeast(1)
+        val scale = if (maxDim > 1080) 1080f / maxDim else 1f
+        val thumb = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                source,
+                (source.width * scale).roundToInt().coerceAtLeast(1),
+                (source.height * scale).roundToInt().coerceAtLeast(1),
+                true
+            )
+        } else {
+            source
+        }
+        try {
+            FileOutputStream(outFile).use { fos ->
+                thumb.compress(Bitmap.CompressFormat.JPEG, 84, fos)
+            }
+        } finally {
+            if (thumb !== source) thumb.recycle()
+        }
+        return outFile
     }
 }

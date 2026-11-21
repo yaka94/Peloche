@@ -36,6 +36,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import android.content.Context
+import android.hardware.display.DisplayManager
+import android.os.Build
+import android.view.Surface
+import android.view.WindowManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +72,37 @@ import com.example.ui.theme.WarmEngraving
 import com.example.viewmodel.ExpiredFilmAlert
 
 /**
+ * Handle allowing Compose screens to start/stop hardware Super 8 MP4 recording
+ * directly on the live AnalogGlSurfaceView EGL pipeline.
+ */
+class Super8RecorderHandle {
+    internal var glView: AnalogGlSurfaceView? = null
+
+    fun startRecording(
+        outputFile: java.io.File,
+        aspectRatio: Float,
+        targetFps: Int = 24,
+        onStarted: (Boolean) -> Unit
+    ) {
+        val view = glView
+        if (view == null) {
+            onStarted(false)
+            return
+        }
+        view.startSuper8Recording(outputFile, aspectRatio, targetFps, onStarted)
+    }
+
+    fun stopRecording(onFinished: (java.io.File?) -> Unit) {
+        val view = glView
+        if (view == null) {
+            onFinished(null)
+            return
+        }
+        view.stopSuper8Recording(onFinished)
+    }
+}
+
+/**
  * Reusable live OpenGL ES preview view that renders either a live CameraX stream
  * or the bundled Day/Night Scène Témoin through our 3-stage GLSL optical shader.
  */
@@ -74,14 +111,31 @@ fun LiveOpticalPreviewSurface(
     params: OpticalChainParams,
     useCameraStream: Boolean,
     sampleSceneNight: Boolean,
+    animatedEffectsEnabled: Boolean = true,
+    recorderHandle: Super8RecorderHandle? = null,
     modifier: Modifier = Modifier,
     onSurfaceTextureReady: ((CameraSurfaceHolder) -> Unit)? = null,
     onSurfaceTextureDestroyed: ((CameraSurfaceHolder) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestOnReady = rememberUpdatedState(onSurfaceTextureReady)
     val latestOnDestroyed = rememberUpdatedState(onSurfaceTextureDestroyed)
+
+    fun readCurrentDisplayRotation(): Int {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                context.display?.rotation ?: Surface.ROTATION_0
+            } else {
+                @Suppress("DEPRECATION")
+                (context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.defaultDisplay?.rotation
+                    ?: Surface.ROTATION_0
+            }
+        } catch (_: Throwable) {
+            Surface.ROTATION_0
+        }
+    }
 
     val glView = remember {
         AnalogGlSurfaceView(
@@ -98,29 +152,53 @@ fun LiveOpticalPreviewSurface(
             } else {
                 null
             }
-        )
+        ).also { it.setDisplayRotation(readCurrentDisplayRotation()) }
     }
 
-    DisposableEffect(lifecycleOwner, glView) {
+    DisposableEffect(lifecycleOwner, glView, recorderHandle) {
+        recorderHandle?.glView = glView
+        val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        val displayListener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = Unit
+            override fun onDisplayRemoved(displayId: Int) = Unit
+            override fun onDisplayChanged(displayId: Int) {
+                glView.setDisplayRotation(readCurrentDisplayRotation())
+            }
+        }
+        displayManager?.registerDisplayListener(displayListener, null)
+
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> glView.onResume()
+                Lifecycle.Event.ON_RESUME -> {
+                    glView.setDisplayRotation(readCurrentDisplayRotation())
+                    glView.onResume()
+                }
                 Lifecycle.Event.ON_PAUSE -> glView.onPause()
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            if (recorderHandle?.glView === glView) {
+                recorderHandle.glView = null
+            }
+            displayManager?.unregisterDisplayListener(displayListener)
             lifecycleOwner.lifecycle.removeObserver(observer)
             glView.releaseSafely()
         }
     }
 
+    val currentRotation = remember(configuration.orientation, configuration.screenWidthDp, configuration.screenHeightDp) {
+        readCurrentDisplayRotation()
+    }
+
     AndroidView(
         factory = { glView },
         update = { view ->
+            view.setDisplayRotation(currentRotation)
             view.setCameraFeedActive(useCameraStream)
             view.setSampleNight(sampleSceneNight)
+            view.setAnimatedEffectsEnabled(animatedEffectsEnabled)
             view.updateParams(params)
         },
         modifier = modifier

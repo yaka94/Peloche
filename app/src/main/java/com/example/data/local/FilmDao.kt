@@ -49,6 +49,9 @@ interface FilmDao {
     @Query("DELETE FROM film_rolls WHERE id = :rollId")
     suspend fun deleteRollById(rollId: Long)
 
+    @Query("UPDATE film_rolls SET customTitle = :title WHERE id = :rollId")
+    suspend fun updateRollTitle(rollId: Long, title: String)
+
     // Frames
     @Query("SELECT * FROM film_frames WHERE rollId = :rollId ORDER BY frameNumber ASC")
     fun observeFramesForRoll(rollId: Long): Flow<List<FilmFrameEntity>>
@@ -64,4 +67,7 @@ interface FilmDao {
 
     @Update
     suspend fun updateFrame(frame: FilmFrameEntity)
+
+    @Query("UPDATE film_frames SET caption = :caption WHERE id = :frameId")
+    suspend fun updateFrameCaption(frameId: Long, caption: String)
 }

@@ -229,7 +229,7 @@ object ExifAndExportManager {
         }
 
         canvas.drawText(
-            "PELOCHE  •  PLANCHE-CONTACT N°%03d".format(roll.rollNumber),
+            "PELOCHE  •  ${roll.displayTitle.uppercase()}  (N°%03d)".format(roll.rollNumber),
             sidePad.toFloat(),
             84f,
             titlePaint
@@ -351,6 +351,263 @@ object ExifAndExportManager {
             val mime = if (file.name.endsWith(".png", ignoreCase = true)) "image/png" else "image/jpeg"
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val chooser = Intent.createChooser(sendIntent, chooserTitle).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * Renders a museum-paper Gallery Print Card (warm cream matte background #F4F2EC,
+     * soft multi-layer realistic drop shadow, and centered refined caption e.g. "Pastel 400 · Half Frame")
+     * in either 4:5 Post (1440x1800) or 9:16 Story (1440x2560) format for sharing.
+     */
+    fun renderGalleryPrintCard(
+        sourceFile: File,
+        caption: String,
+        storyFormat916: Boolean,
+        handwrittenNote: String = ""
+    ): Bitmap? {
+        if (!sourceFile.exists()) return null
+        val src = BitmapFactory.decodeFile(sourceFile.absolutePath) ?: return null
+        return try {
+            val outW = 1440
+            val outH = if (storyFormat916) 2560 else 1800
+            val card = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(card)
+
+            // Warm museum archival paper backdrop (#F4F2EC)
+            canvas.drawColor(Color.rgb(244, 242, 236))
+
+            val hasNote = handwrittenNote.trim().isNotEmpty()
+            val sideMargin = (outW * 0.095f)
+            val topMargin = if (storyFormat916) outH * 0.13f else outH * 0.075f
+            val bottomCaptionZone = when {
+                storyFormat916 && hasNote -> outH * 0.20f
+                storyFormat916 -> outH * 0.17f
+                hasNote -> outH * 0.18f
+                else -> outH * 0.14f
+            }
+            val availW = outW - sideMargin * 2f
+            val availH = outH - topMargin - bottomCaptionZone
+
+            val imgAspect = src.width.toFloat() / src.height.coerceAtLeast(1).toFloat()
+            val drawW: Float
+            val drawH: Float
+            if (availW / availH > imgAspect) {
+                drawH = availH
+                drawW = drawH * imgAspect
+            } else {
+                drawW = availW
+                drawH = drawW / imgAspect
+            }
+
+            val left = (outW - drawW) / 2f
+            val top = topMargin + (availH - drawH) / 2f
+            val dstRect = RectF(left, top, left + drawW, top + drawH)
+
+            // Multi-layer soft museum drop shadow underneath the print
+            val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+            val shadowLayers = listOf(
+                Triple(32f, 22f, 16),
+                Triple(20f, 14f, 24),
+                Triple(10f, 7f, 34),
+                Triple(4f, 3f, 40)
+            )
+            shadowLayers.forEach { (blurPad, yOff, alpha) ->
+                shadowPaint.color = Color.argb(alpha, 24, 21, 18)
+                canvas.drawRoundRect(
+                    RectF(
+                        dstRect.left - blurPad * 0.35f,
+                        dstRect.top + yOff - blurPad * 0.2f,
+                        dstRect.right + blurPad * 0.35f,
+                        dstRect.bottom + yOff + blurPad * 0.55f
+                    ),
+                    blurPad * 0.45f,
+                    blurPad * 0.45f,
+                    shadowPaint
+                )
+            }
+
+            val imgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            canvas.drawBitmap(src, null, dstRect, imgPaint)
+
+            // Handwritten fountain-pen note (optional)
+            val cleanNote = handwrittenNote.trim()
+            val captionY = if (cleanNote.isNotEmpty()) {
+                val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(38, 35, 31)
+                    textSize = if (cleanNote.length > 36) 44f else 54f
+                    textAlign = Paint.Align.CENTER
+                    typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
+                }
+                val noteY = dstRect.bottom + 84f
+                canvas.save()
+                canvas.rotate(-1.1f, outW / 2f, noteY)
+                canvas.drawText("“$cleanNote”", outW / 2f, noteY, notePaint)
+                canvas.restore()
+                dstRect.bottom + 148f
+            } else {
+                dstRect.bottom + 82f
+            }
+
+            // Minimalist centered museum caption below the print (e.g. "Pastel 400 · Half Frame")
+            val captionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(112, 107, 99)
+                textSize = 34f
+                textAlign = Paint.Align.CENTER
+                letterSpacing = 0.04f
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            }
+            canvas.drawText(caption, outW / 2f, captionY, captionPaint)
+            card
+        } finally {
+            src.recycle()
+        }
+    }
+
+    fun exportGalleryPrintCard(
+        context: Context,
+        sourceFile: File,
+        caption: String,
+        filePrefix: String,
+        storyFormat916: Boolean,
+        losslessPng: Boolean,
+        handwrittenNote: String = ""
+    ): Pair<File?, Uri?> {
+        val card = renderGalleryPrintCard(
+            sourceFile = sourceFile,
+            caption = caption,
+            storyFormat916 = storyFormat916,
+            handwrittenNote = handwrittenNote
+        ) ?: return null to null
+        val shareDir = File(context.cacheDir, "share").apply { mkdirs() }
+        val ext = if (losslessPng) "png" else "jpg"
+        val formatTag = if (storyFormat916) "STORY" else "GALERIE"
+        val outFile = File(shareDir, "${filePrefix}_${formatTag}.$ext")
+        FileOutputStream(outFile).use { fos ->
+            if (losslessPng) card.compress(Bitmap.CompressFormat.PNG, 100, fos)
+            else card.compress(Bitmap.CompressFormat.JPEG, 95, fos)
+        }
+        card.recycle()
+        val uri = exportFileToMediaStore(
+            context = context,
+            sourceFile = outFile,
+            displayName = outFile.name,
+            mimeType = if (losslessPng) "image/png" else "image/jpeg"
+        )
+        return outFile to uri
+    }
+
+    /**
+     * Exports a single developed print to DCIM/Peloche, optionally engraving a handwritten note
+     * onto a clean cream margin (or Polaroid/Instax chin) when provided.
+     */
+    fun exportFrameWithOptionalNote(
+        context: Context,
+        sourceFile: File,
+        handwrittenNote: String,
+        displayName: String,
+        losslessPng: Boolean
+    ): Uri? {
+        val cleanNote = handwrittenNote.trim()
+        if (cleanNote.isEmpty()) {
+            return exportFileToMediaStore(
+                context = context,
+                sourceFile = sourceFile,
+                displayName = displayName,
+                mimeType = if (losslessPng) "image/png" else "image/jpeg"
+            )
+        }
+        val src = BitmapFactory.decodeFile(sourceFile.absolutePath) ?: return null
+        val marginH = (src.height * 0.11f).toInt().coerceIn(90, 210)
+        val out = Bitmap.createBitmap(src.width, src.height + marginH, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawColor(Color.rgb(245, 242, 234))
+        canvas.drawBitmap(src, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        src.recycle()
+
+        val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(38, 35, 31)
+            textSize = (marginH * 0.36f).coerceIn(26f, 64f)
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
+        }
+        val textY = out.height - marginH * 0.38f
+        canvas.save()
+        canvas.rotate(-0.9f, out.width / 2f, textY)
+        canvas.drawText(cleanNote, out.width / 2f, textY, notePaint)
+        canvas.restore()
+
+        val tmpDir = File(context.cacheDir, "share").apply { mkdirs() }
+        val tmpFile = File(tmpDir, displayName)
+        FileOutputStream(tmpFile).use { fos ->
+            if (losslessPng) out.compress(Bitmap.CompressFormat.PNG, 100, fos)
+            else out.compress(Bitmap.CompressFormat.JPEG, 95, fos)
+        }
+        out.recycle()
+        return exportFileToMediaStore(
+            context = context,
+            sourceFile = tmpFile,
+            displayName = displayName,
+            mimeType = if (losslessPng) "image/png" else "image/jpeg"
+        )
+    }
+
+    /**
+     * Saves a recorded Super 8 / 35mm MP4 clip to Movies/Peloche via MediaStore (zero storage permission on API 29+).
+     */
+    fun exportVideoToMediaStore(
+        context: Context,
+        sourceFile: File,
+        displayName: String
+    ): Uri? {
+        if (!sourceFile.exists()) return null
+        return try {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(
+                        MediaStore.Video.Media.RELATIVE_PATH,
+                        "${Environment.DIRECTORY_MOVIES}/Peloche"
+                    )
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+            }
+            val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                ?: return null
+            resolver.openOutputStream(uri)?.use { out ->
+                sourceFile.inputStream().use { inp -> inp.copyTo(out) }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val done = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+                resolver.update(uri, done, null, null)
+            }
+            uri
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * Shares a recorded Super 8 / 35mm MP4 clip via native Android Share Sheet.
+     */
+    fun shareVideoFile(context: Context, file: File, chooserTitle: String): Boolean {
+        if (!file.exists()) return false
+        return try {
+            val authority = "${context.packageName}.fileprovider"
+            val uri = FileProvider.getUriForFile(context, authority, file)
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "video/mp4"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }

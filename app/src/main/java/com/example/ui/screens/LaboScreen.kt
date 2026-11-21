@@ -78,6 +78,7 @@ import com.example.ui.components.FilmCanisterThumbnail
 import com.example.ui.components.LabStampTag
 import com.example.ui.components.LiveOpticalPreviewSurface
 import com.example.ui.components.MachinedScrewHead
+import com.example.ui.components.RenameRollDialog
 import com.example.ui.components.blackLeatherTexture
 import com.example.ui.components.brushedMetalPlate
 import com.example.ui.components.recessedInstrumentWell
@@ -117,6 +118,7 @@ fun LaboScreen(
     onOpenDevelopSheet: (FilmRollEntity) -> Unit,
     onResumeRollInViewfinder: (FilmRollEntity) -> Unit,
     onOpenContactSheet: (FilmRollEntity) -> Unit,
+    onRenameRoll: (FilmRollEntity, String) -> Unit,
     onDeleteRoll: (FilmRollEntity) -> Unit
 ) {
     val dateFmt = remember { SimpleDateFormat("dd MMM yyyy • HH:mm", Locale.FRENCH) }
@@ -129,6 +131,7 @@ fun LaboScreen(
     var activeFilter by remember { mutableStateOf(RollFilter.ALL) }
     var sortNewestFirst by remember { mutableStateOf(true) }
     var rollPendingDelete by remember { mutableStateOf<FilmRollEntity?>(null) }
+    var rollPendingRename by remember { mutableStateOf<FilmRollEntity?>(null) }
 
     val totalPrints = remember(developedRolls) { developedRolls.sumOf { it.shotsTaken } }
 
@@ -367,7 +370,7 @@ fun LaboScreen(
                                             .background(ledColor)
                                     )
                                     Text(
-                                        text = "${bagBody.name} • ${bagFilm.name}",
+                                        text = if (rollInBag.customTitle.isNotBlank()) rollInBag.customTitle else "${bagBody.name} • ${bagFilm.name}",
                                         style = MaterialTheme.typography.titleSmall,
                                         color = FilmCream,
                                         maxLines = 1,
@@ -506,6 +509,7 @@ fun LaboScreen(
                             previewPaths = developedRollPreviews[roll.id].orEmpty(),
                             dateFmt = dateFmt,
                             onOpenContactSheet = { onOpenContactSheet(roll) },
+                            onRequestRename = { rollPendingRename = roll },
                             onRequestDelete = { rollPendingDelete = roll }
                         )
                     }
@@ -765,6 +769,15 @@ fun LaboScreen(
         }
     }
 
+    // Roll rename dialog
+    rollPendingRename?.let { roll ->
+        RenameRollDialog(
+            roll = roll,
+            onDismiss = { rollPendingRename = null },
+            onConfirm = { newTitle -> onRenameRoll(roll, newTitle) }
+        )
+    }
+
     // Safe delete confirmation dialog
     rollPendingDelete?.let { roll ->
         AlertDialog(
@@ -774,7 +787,7 @@ fun LaboScreen(
             textContentColor = SilverChrome,
             title = {
                 Text(
-                    text = "Supprimer le rouleau N°%03d ?".format(roll.rollNumber),
+                    text = "Supprimer ${roll.displayTitle} ?",
                     style = MaterialTheme.typography.titleLarge
                 )
             },
@@ -937,6 +950,7 @@ fun DevelopmentMethodSheet(
     activeRoll: FilmRollEntity,
     selectedMethod: DevelopmentMethod,
     sampleSceneNight: Boolean,
+    animatedEffectsEnabled: Boolean,
     onSelectMethod: (DevelopmentMethod) -> Unit,
     onDismiss: () -> Unit,
     onStartDevelopment: (DevelopmentMethod) -> Unit
@@ -994,6 +1008,7 @@ fun DevelopmentMethodSheet(
                     params = previewParams,
                     useCameraStream = false,
                     sampleSceneNight = sampleSceneNight,
+                    animatedEffectsEnabled = animatedEffectsEnabled,
                     modifier = Modifier.fillMaxSize()
                 )
                 Row(

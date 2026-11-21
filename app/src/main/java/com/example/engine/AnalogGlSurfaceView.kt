@@ -18,10 +18,12 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.Message
+import android.os.SystemClock
 import android.view.Surface
 import android.view.TextureView
 import com.example.R
 import com.example.domain.model.OpticalChainParams
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -41,8 +43,22 @@ class CameraSurfaceHolder(val surfaceTexture: SurfaceTexture) {
     private var released = false
 
     @Volatile
-    var displayAspect: Float = 0.75f
-        private set
+    private var bufferWidth: Int = 1280
+    @Volatile
+    private var bufferHeight: Int = 960
+
+    /**
+     * Computes the true visual aspect ratio (width/height) of the camera buffer in screen space
+     * for any device orientation (0°, 90°, 180°, 270°) by inspecting the SurfaceTexture matrix.
+     */
+    fun computeDisplayAspect(texMatrix: FloatArray): Float {
+        val w = bufferWidth.coerceAtLeast(1).toFloat()
+        val h = bufferHeight.coerceAtLeast(1).toFloat()
+        // Column 0 of texMatrix maps screen +X into texture (u, v).
+        // If |m00| >= |m01|, screen X aligns with texture U (0°/180°); otherwise rotated 90°/270°.
+        val unrotated = kotlin.math.abs(texMatrix[0]) >= kotlin.math.abs(texMatrix[1])
+        return if (unrotated) (w / h) else (h / w)
+    }
 
     fun isValid(): Boolean = synchronized(lock) {
         if (disposed || released) return false
@@ -65,8 +81,8 @@ class CameraSurfaceHolder(val surfaceTexture: SurfaceTexture) {
         }
         return try {
             if (width > 0 && height > 0) {
-                // CameraX delivers landscape sensor dimensions; portrait display aspect is short/long.
-                displayAspect = min(width, height).toFloat() / max(width, height).toFloat()
+                bufferWidth = width
+                bufferHeight = height
             }
             surfaceTexture.setDefaultBufferSize(width, height)
             val surface = Surface(surfaceTexture)
@@ -139,7 +155,18 @@ class AnalogGlSurfaceView(
         const val MSG_RENDER = 4
         const val MSG_DESTROY_SURFACE = 5
         const val MSG_RELEASE_ALL = 6
+        const val MSG_ANIM_TICK = 7
+        const val MSG_START_RECORDING = 8
+        const val MSG_STOP_RECORDING = 9
+        const val ANIM_FRAME_INTERVAL_MS = 42L
     }
+
+    private data class StartRecordingPayload(
+        val outputFile: File,
+        val aspectRatio: Float,
+        val targetFps: Int,
+        val onStarted: (Boolean) -> Unit
+    )
 
     private data class SurfaceInitPayload(
         val viewSurfaceTexture: SurfaceTexture,
@@ -156,9 +183,11 @@ class AnalogGlSurfaceView(
     private val useCameraFeed = AtomicBoolean(useCameraStream)
     private val sampleNight = AtomicBoolean(false)
     private val sampleTextureDirty = AtomicBoolean(true)
+    private val animatedEffectsEnabled = AtomicBoolean(true)
     private val frameAvailable = AtomicBoolean(false)
     private val cameraAttachRequested = AtomicBoolean(false)
     private val cameraHolderRef = AtomicReference<CameraSurfaceHolder?>(null)
+    private val animStartTimeMs = SystemClock.uptimeMillis()
 
     private val glThread = HandlerThread("PelocheGlPreview").apply { start() }
     private val glHandler = Handler(glThread.looper, ::handleGlMessage)
@@ -181,8 +210,15 @@ class AnalogGlSurfaceView(
     private var viewHeight = 1
     private var frameCount = 0
     private var hasReceivedCameraFrame = false
+    private val videoRecorder = Super8VideoRecorder()
+    private var pendingRecordingFinishedCallback: ((File?) -> Unit)? = null
+
+    @Volatile
+    private var displayRotation: Int = Surface.ROTATION_0
 
     private val texMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
+    private val displayRotMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
+    private val finalTexMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
     private val identityMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
 
     private val vertexCoords = floatArrayOf(
@@ -237,12 +273,52 @@ class AnalogGlSurfaceView(
         scheduleRender()
     }
 
+    fun setDisplayRotation(rotation: Int) {
+        if (displayRotation != rotation) {
+            displayRotation = rotation
+            scheduleRender()
+        }
+    }
+
     fun setCameraFeedActive(active: Boolean) {
         useCameraFeed.set(active)
         if (active && onSurfaceTextureReady != null && !isDisposed.get() && isAvailable) {
             requestCameraSurfaceTextureAttachmentOnMainThread()
         }
         scheduleRender()
+    }
+
+    fun setAnimatedEffectsEnabled(enabled: Boolean) {
+        if (animatedEffectsEnabled.getAndSet(enabled) != enabled) {
+            if (!enabled) {
+                glHandler.removeMessages(MSG_ANIM_TICK)
+            }
+            scheduleRender()
+        }
+    }
+
+    fun startSuper8Recording(
+        outputFile: File,
+        aspectRatio: Float,
+        targetFps: Int = 24,
+        onStarted: (Boolean) -> Unit
+    ) {
+        if (isDisposed.get() || isPaused.get()) {
+            mainHandler.post { onStarted(false) }
+            return
+        }
+        glHandler.obtainMessage(
+            MSG_START_RECORDING,
+            StartRecordingPayload(outputFile, aspectRatio, targetFps, onStarted)
+        ).sendToTarget()
+    }
+
+    fun stopSuper8Recording(onFinished: (File?) -> Unit) {
+        if (isDisposed.get()) {
+            mainHandler.post { onFinished(null) }
+            return
+        }
+        glHandler.obtainMessage(MSG_STOP_RECORDING, onFinished).sendToTarget()
     }
 
     fun onResume() {
@@ -252,6 +328,10 @@ class AnalogGlSurfaceView(
 
     fun onPause() {
         isPaused.set(true)
+        glHandler.removeMessages(MSG_ANIM_TICK)
+        if (videoRecorder.isRecording) {
+            glHandler.obtainMessage(MSG_STOP_RECORDING, null).sendToTarget()
+        }
     }
 
     /**
@@ -282,6 +362,7 @@ class AnalogGlSurfaceView(
         } else {
             null
         }
+        display?.rotation?.let { displayRotation = it }
         glHandler.obtainMessage(
             MSG_INIT_SURFACE,
             SurfaceInitPayload(surface, width, height, detachedCameraSt)
@@ -290,6 +371,7 @@ class AnalogGlSurfaceView(
 
     override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
         if (isDisposed.get()) return
+        display?.rotation?.let { displayRotation = it }
         glHandler.removeMessages(MSG_RESIZE)
         glHandler.obtainMessage(MSG_RESIZE, width, height).sendToTarget()
     }
@@ -298,6 +380,7 @@ class AnalogGlSurfaceView(
         disposeCameraHolderOnMainThread()
         if (!isDisposed.get()) {
             glHandler.removeMessages(MSG_RENDER)
+            glHandler.removeMessages(MSG_ANIM_TICK)
             glHandler.obtainMessage(MSG_DESTROY_SURFACE, surface).sendToTarget()
             // Return false: GL thread releases `surface` right after eglDestroySurface().
             return false
@@ -373,20 +456,61 @@ class AnalogGlSurfaceView(
                     cameraAttachRequested.set(false)
                 }
             }
-            MSG_RENDER -> {
+            MSG_RENDER, MSG_ANIM_TICK -> {
                 if (isGlReady() && !isDisposed.get() && !isPaused.get()) {
                     renderFrameOnGlThread()
                 }
             }
             MSG_DESTROY_SURFACE -> {
+                glHandler.removeMessages(MSG_ANIM_TICK)
+                stopRecordingIfActiveOnGlThread(null)
                 val surfaceToRelease = msg.obj as? SurfaceTexture
                 destroyEglSurfaceOnlyOnGlThread(surfaceToRelease)
             }
             MSG_RELEASE_ALL -> {
+                glHandler.removeMessages(MSG_ANIM_TICK)
+                stopRecordingIfActiveOnGlThread(null)
                 releaseAllGlResourcesOnGlThread()
+            }
+            MSG_START_RECORDING -> {
+                val payload = msg.obj as? StartRecordingPayload ?: return true
+                val started = if (isGlReady() && !isDisposed.get()) {
+                    videoRecorder.start(
+                        eglDisplay = eglDisplay,
+                        fallbackConfig = eglConfig,
+                        eglContext = eglContext,
+                        targetFile = payload.outputFile,
+                        aspectRatio = payload.aspectRatio,
+                        targetFps = payload.targetFps
+                    )
+                } else {
+                    false
+                }
+                if (started) {
+                    scheduleRender()
+                }
+                mainHandler.post { payload.onStarted(started) }
+            }
+            MSG_STOP_RECORDING -> {
+                @Suppress("UNCHECKED_CAST")
+                val callback = msg.obj as? ((File?) -> Unit)
+                stopRecordingIfActiveOnGlThread(callback)
             }
         }
         return true
+    }
+
+    private fun stopRecordingIfActiveOnGlThread(callback: ((File?) -> Unit)?) {
+        val finishedFile = if (videoRecorder.isRecording) {
+            videoRecorder.stopAndRelease(eglDisplay, eglSurface, eglContext)
+        } else {
+            null
+        }
+        val effectiveCallback = callback ?: pendingRecordingFinishedCallback
+        pendingRecordingFinishedCallback = null
+        if (effectiveCallback != null) {
+            mainHandler.post { effectiveCallback(finishedFile) }
+        }
     }
 
     private fun isGlReady(): Boolean =
@@ -609,19 +733,68 @@ class AnalogGlSurfaceView(
 
         val params = paramsRef.get()
         frameCount = (frameCount + 1) % 10000
-        val timeSeed = (frameCount / 3).toFloat() * 0.17f
+        // Continuous elapsed seconds (wrapped every 10 min for highp float precision)
+        // drives smooth procedural light leaks, flares, dust & 18fps grain in real time.
+        val timeSeed = if (animatedEffectsEnabled.get()) {
+            ((SystemClock.uptimeMillis() - animStartTimeMs) % 600_000L) / 1000.0f
+        } else {
+            0.42f
+        }
 
+        val shouldRecordFrame = videoRecorder.isRecording
         if (drewCamera && programOes != 0 && holder != null) {
+            val rotDegrees = when (displayRotation) {
+                Surface.ROTATION_90 -> -90f
+                Surface.ROTATION_180 -> -180f
+                Surface.ROTATION_270 -> -270f
+                else -> 0f
+            }
+            val activeMatrix = if (rotDegrees == 0f) {
+                texMatrix
+            } else {
+                Matrix.setIdentityM(displayRotMatrix, 0)
+                Matrix.translateM(displayRotMatrix, 0, 0.5f, 0.5f, 0f)
+                Matrix.rotateM(displayRotMatrix, 0, rotDegrees, 0f, 0f, 1f)
+                Matrix.translateM(displayRotMatrix, 0, -0.5f, -0.5f, 0f)
+                Matrix.multiplyMM(finalTexMatrix, 0, texMatrix, 0, displayRotMatrix, 0)
+                finalTexMatrix
+            }
+            val camAspect = holder.computeDisplayAspect(activeMatrix)
             drawQuad(
                 program = programOes,
                 textureTarget = GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
                 textureId = oesTextureId,
-                matrix = texMatrix,
+                matrix = activeMatrix,
                 tBuf = texBufferOes,
                 params = params,
-                srcAspect = holder.displayAspect,
-                timeSeed = timeSeed
+                srcAspect = camAspect,
+                timeSeed = timeSeed,
+                targetWidth = viewWidth,
+                targetHeight = viewHeight
             )
+            EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+
+            if (shouldRecordFrame) {
+                val uprightParams = if (params.invertedGroundGlass) params.copy(invertedGroundGlass = false) else params
+                videoRecorder.encodeFrame(eglDisplay, eglContext) { encW, encH ->
+                    GLES20.glViewport(0, 0, encW, encH)
+                    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                    drawQuad(
+                        program = programOes,
+                        textureTarget = GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                        textureId = oesTextureId,
+                        matrix = activeMatrix,
+                        tBuf = texBufferOes,
+                        params = uprightParams,
+                        srcAspect = camAspect,
+                        timeSeed = timeSeed,
+                        targetWidth = encW,
+                        targetHeight = encH
+                    )
+                }
+                EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+                GLES20.glViewport(0, 0, viewWidth, viewHeight)
+            }
         } else if (!cameraEnabled && program2d != 0) {
             val sampleAspect = sampleBitmapWidth.toFloat() / sampleBitmapHeight.coerceAtLeast(1).toFloat()
             drawQuad(
@@ -632,11 +805,45 @@ class AnalogGlSurfaceView(
                 tBuf = texBuffer2d,
                 params = params,
                 srcAspect = sampleAspect,
-                timeSeed = timeSeed
+                timeSeed = timeSeed,
+                targetWidth = viewWidth,
+                targetHeight = viewHeight
             )
+            EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+
+            if (shouldRecordFrame) {
+                val uprightParams = if (params.invertedGroundGlass) params.copy(invertedGroundGlass = false) else params
+                videoRecorder.encodeFrame(eglDisplay, eglContext) { encW, encH ->
+                    GLES20.glViewport(0, 0, encW, encH)
+                    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                    drawQuad(
+                        program = program2d,
+                        textureTarget = GLES20.GL_TEXTURE_2D,
+                        textureId = sampleTextureId,
+                        matrix = identityMatrix,
+                        tBuf = texBuffer2d,
+                        params = uprightParams,
+                        srcAspect = sampleAspect,
+                        timeSeed = timeSeed,
+                        targetWidth = encW,
+                        targetHeight = encH
+                    )
+                }
+                EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+                GLES20.glViewport(0, 0, viewWidth, viewHeight)
+            }
+        } else {
+            EGL14.eglSwapBuffers(eglDisplay, eglSurface)
         }
 
-        EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+        // Maintain silky ~24fps procedural motion in Scène Témoin / Labo / Boutique previews
+        // and guarantee continuous 24fps capture whenever Super 8 video recording is active.
+        glHandler.removeMessages(MSG_ANIM_TICK)
+        if ((animatedEffectsEnabled.get() || videoRecorder.isRecording) &&
+            !isPaused.get() && !isDisposed.get() && (drewCamera || !cameraEnabled)
+        ) {
+            glHandler.sendEmptyMessageDelayed(MSG_ANIM_TICK, ANIM_FRAME_INTERVAL_MS)
+        }
     }
 
     private fun drawQuad(
@@ -647,11 +854,13 @@ class AnalogGlSurfaceView(
         tBuf: FloatBuffer,
         params: OpticalChainParams,
         srcAspect: Float,
-        timeSeed: Float
+        timeSeed: Float,
+        targetWidth: Int = viewWidth,
+        targetHeight: Int = viewHeight
     ) {
         GLES20.glUseProgram(program)
 
-        val viewAspect = viewWidth.toFloat() / viewHeight.toFloat()
+        val viewAspect = targetWidth.toFloat() / targetHeight.coerceAtLeast(1).toFloat()
         var cropX = 1f
         var cropY = 1f
         if (viewAspect > srcAspect) {
@@ -663,8 +872,8 @@ class AnalogGlSurfaceView(
         OpticalShaderSource.bindOpticalUniforms(
             program = program,
             params = params,
-            surfaceWidth = viewWidth,
-            surfaceHeight = viewHeight,
+            surfaceWidth = targetWidth,
+            surfaceHeight = targetHeight,
             cropScaleX = cropX,
             cropScaleY = cropY,
             timeSeed = timeSeed
